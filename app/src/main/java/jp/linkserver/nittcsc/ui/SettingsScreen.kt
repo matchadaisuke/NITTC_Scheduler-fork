@@ -84,6 +84,7 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import jp.linkserver.nittcsc.data.LessonNotificationExclusionEntity
+import jp.linkserver.nittcsc.data.AppThemeMode
 import jp.linkserver.nittcsc.data.LessonStartNotificationChipMode
 import jp.linkserver.nittcsc.data.LessonNotificationCustomization
 import jp.linkserver.nittcsc.data.LongBreakEntity
@@ -139,6 +140,7 @@ fun SettingsScreen(
     onToggleDrawerNavigation: (Boolean) -> Unit,
     onOpenSpecialTimetableSettings: () -> Unit = {},
     onUpdateUiDesignMode: (UiDesignMode) -> Unit = {},
+    onUpdateAppThemeMode: (AppThemeMode) -> Unit = {},
     onAcknowledgeExpressiveWarning: () -> Unit = {},
     onToggleAddTasksToCalendar: (Boolean) -> Unit,
     onToggleSyncLessonsToCalendar: (Boolean) -> Unit = {},
@@ -195,6 +197,7 @@ fun SettingsScreen(
     var expandExamTimetableSettings by rememberSaveable { mutableStateOf(false) }
     var showLocalAiWarningDialog by remember { mutableStateOf(false) }
     var showUiDesignModeDialog by rememberSaveable { mutableStateOf(false) }
+    var showAppThemeModeDialog by rememberSaveable { mutableStateOf(false) }
     var showExpressiveWarningDialog by rememberSaveable { mutableStateOf(false) }
     val s = state.settings
     val lessonCalendarSyncStart = s?.lessonCalendarSyncStart ?: s?.termStart ?: LocalDate.now()
@@ -772,6 +775,39 @@ fun SettingsScreen(
             dismissButton = {
                 TextButton(onClick = { showClearAppCalendarEventsDialog = false }) {
                     Text(stringResource(R.string.btn_cancel))
+                }
+            }
+        )
+    }
+
+    if (showAppThemeModeDialog) {
+        AppDialog(
+            onDismissRequest = { showAppThemeModeDialog = false },
+            title = { Text(stringResource(R.string.dialog_app_theme_title)) },
+            text = {
+                Column(modifier = Modifier.selectableGroup()) {
+                    AppThemeMode.entries.forEach { mode ->
+                        UiDesignModeOptionRow(
+                            title = stringResource(
+                                when (mode) {
+                                    AppThemeMode.SYSTEM -> R.string.app_theme_system
+                                    AppThemeMode.LIGHT -> R.string.app_theme_light
+                                    AppThemeMode.DARK -> R.string.app_theme_dark
+                                }
+                            ),
+                            supportingText = null,
+                            selected = state.appThemeMode == mode,
+                            onSelect = {
+                                onUpdateAppThemeMode(mode)
+                                showAppThemeModeDialog = false
+                            }
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showAppThemeModeDialog = false }) {
+                    Text(stringResource(R.string.btn_close))
                 }
             }
         )
@@ -1365,6 +1401,36 @@ fun SettingsScreen(
             AppSettingsCategory(title = stringResource(R.string.section_display_settings))
 
             AppSettingsGroup {
+                item("label_app_theme") {
+                    val themeSummary = stringResource(
+                        when (state.appThemeMode) {
+                            AppThemeMode.SYSTEM -> R.string.app_theme_system
+                            AppThemeMode.LIGHT -> R.string.app_theme_light
+                            AppThemeMode.DARK -> R.string.app_theme_dark
+                        }
+                    )
+                    if (useExpressiveDesign) {
+                        AppSettingsNavigationItem(
+                            title = stringResource(R.string.label_app_theme),
+                            summary = themeSummary,
+                            onClick = { showAppThemeModeDialog = true }
+                        )
+                    } else {
+                        AppListItem(
+                            headlineContent = {
+                                Text(
+                                    text = stringResource(R.string.label_app_theme),
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            },
+                            supportingContent = { Text(themeSummary) },
+                            onClick = { showAppThemeModeDialog = true }
+                        )
+                    }
+                }
+                standardOnly("HorizontalDivider_theme") {
+                    HorizontalDivider()
+                }
                 if (InternalFeatureFlags.MATERIAL_3_EXPRESSIVE) {
                     item("label_ui_design") {
                         if (useExpressiveDesign) {

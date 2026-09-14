@@ -2,6 +2,7 @@ package jp.linkserver.nittcsc.ui
 
 import android.os.Build
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -9,6 +10,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -18,6 +21,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -31,8 +35,10 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
 import jp.linkserver.nittcsc.R
@@ -173,7 +179,7 @@ internal fun CustomizationNotificationSettingsContent(
 
             HorizontalDivider()
             Text(
-                "使用可能な変数: {subject} {teacher} {location} {period} {start_time} {end_time} {minutes} {next_subject} {next_teacher} {next_location} {next_period} {next_start_time}",
+                stringResource(R.string.lesson_notification_template_variable_help),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -249,35 +255,114 @@ private fun TemplateField(
     multiline: Boolean = false,
     onChange: (String) -> Unit
 ) {
-    var draft by rememberSaveable(value) { mutableStateOf(value) }
+    var draft by rememberSaveable(stateSaver = TextFieldValue.Saver) {
+        mutableStateOf(TextFieldValue(value, selection = TextRange(value.length)))
+    }
     var wasFocused by remember { mutableStateOf(false) }
     val latestDraft by rememberUpdatedState(draft)
     val latestValue by rememberUpdatedState(value)
     val latestOnChange by rememberUpdatedState(onChange)
 
     fun commit() {
-        if (draft != value) onChange(draft)
+        if (draft.text != value) onChange(draft.text)
+    }
+
+    LaunchedEffect(value) {
+        if (!wasFocused && value != draft.text) {
+            draft = TextFieldValue(value, selection = TextRange(value.length))
+        }
     }
 
     DisposableEffect(Unit) {
         onDispose {
-            if (latestDraft != latestValue) latestOnChange(latestDraft)
+            if (latestDraft.text != latestValue) latestOnChange(latestDraft.text)
         }
     }
 
-    OutlinedTextField(
-        value = draft,
-        onValueChange = { draft = it },
-        modifier = Modifier
-            .fillMaxWidth()
-            .onFocusChanged { focusState ->
-                if (wasFocused && !focusState.isFocused) commit()
-                wasFocused = focusState.isFocused
-            },
-        label = { Text(label) },
-        singleLine = !multiline,
-        minLines = if (multiline) 3 else 1
+    Column(modifier = Modifier.fillMaxWidth()) {
+        OutlinedTextField(
+            value = draft,
+            onValueChange = { draft = it },
+            modifier = Modifier
+                .fillMaxWidth()
+                .onFocusChanged { focusState ->
+                    if (wasFocused && !focusState.isFocused) commit()
+                    wasFocused = focusState.isFocused
+                },
+            label = { Text(label) },
+            singleLine = !multiline,
+            minLines = if (multiline) 3 else 1
+        )
+        TemplateVariablePicker { variable ->
+            val selectionStart = minOf(draft.selection.start, draft.selection.end)
+            val selectionEnd = maxOf(draft.selection.start, draft.selection.end)
+            val updatedText = draft.text.replaceRange(selectionStart, selectionEnd, variable)
+            val updatedCursor = selectionStart + variable.length
+            draft = TextFieldValue(
+                text = updatedText,
+                selection = TextRange(updatedCursor)
+            )
+            onChange(updatedText)
+        }
+    }
+}
+
+private data class TemplateVariable(
+    val token: String,
+    val label: String
+)
+
+@Composable
+private fun TemplateVariablePicker(
+    onVariableSelected: (String) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val variables = listOf(
+        TemplateVariable("{subject}", stringResource(R.string.lesson_notification_variable_subject)),
+        TemplateVariable("{teacher}", stringResource(R.string.lesson_notification_variable_teacher)),
+        TemplateVariable("{location}", stringResource(R.string.lesson_notification_variable_location)),
+        TemplateVariable("{period}", stringResource(R.string.lesson_notification_variable_period)),
+        TemplateVariable("{start_time}", stringResource(R.string.lesson_notification_variable_start_time)),
+        TemplateVariable("{end_time}", stringResource(R.string.lesson_notification_variable_end_time)),
+        TemplateVariable("{minutes}", stringResource(R.string.lesson_notification_variable_minutes)),
+        TemplateVariable("{next_subject}", stringResource(R.string.lesson_notification_variable_next_subject)),
+        TemplateVariable("{next_teacher}", stringResource(R.string.lesson_notification_variable_next_teacher)),
+        TemplateVariable("{next_location}", stringResource(R.string.lesson_notification_variable_next_location)),
+        TemplateVariable("{next_period}", stringResource(R.string.lesson_notification_variable_next_period)),
+        TemplateVariable("{next_start_time}", stringResource(R.string.lesson_notification_variable_next_start_time))
     )
+
+    Box(
+        modifier = Modifier.fillMaxWidth(),
+        contentAlignment = Alignment.CenterEnd
+    ) {
+        TextButton(onClick = { expanded = true }) {
+            Text(stringResource(R.string.lesson_notification_insert_variable))
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false }
+        ) {
+            variables.forEach { variable ->
+                DropdownMenuItem(
+                    text = {
+                        Column {
+                            Text(variable.label)
+                            Text(
+                                text = variable.token,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    },
+                    onClick = {
+                        expanded = false
+                        onVariableSelected(variable.token)
+                    }
+                )
+            }
+        }
+    }
 }
 
 @Composable

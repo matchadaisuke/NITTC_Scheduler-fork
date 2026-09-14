@@ -54,7 +54,7 @@ class UiDesignSwitchTest {
                 var currentScreen by rememberSaveable { mutableStateOf("main") }
                 var input by rememberSaveable { mutableStateOf("") }
                 Column {
-                    Text(currentScreen)
+                    Text(currentScreen, Modifier.testTag("current-screen"))
                     OutlinedTextField(
                         value = input,
                         onValueChange = { input = it },
@@ -84,7 +84,7 @@ class UiDesignSwitchTest {
         composeRule.onNodeWithText("open-details").performClick()
         composeRule.onNodeWithTag("design-switch").performClick()
 
-        composeRule.onNodeWithText("details").assertIsDisplayed()
+        composeRule.onNodeWithTag("current-screen").assertTextEquals("details")
         composeRule.onNodeWithTag("design-input").assertTextEquals("draft")
     }
 

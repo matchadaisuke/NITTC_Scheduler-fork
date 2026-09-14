@@ -1,6 +1,8 @@
 package jp.linkserver.nittcsc.sync
 
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 class CloudSyncExecutionTest {
@@ -86,5 +88,67 @@ class CloudSyncExecutionTest {
                 remoteUpdatedAt = 1L
             )
         )
+    }
+
+    @Test
+    fun cloudEnvelopeRoundTripPreservesVerifiedPayloads() {
+        val envelope = buildCloudEnvelope(
+            updatedAt = 123L,
+            deviceId = "device-a",
+            commitId = "commit-a",
+            payload = JSONObject().put("schema", "nittc-scheduler").put("version", 16),
+            syncPayload = JSONObject().put("syncProtocolVersion", 3).put("changedLessons", "value")
+        )
+
+        val parsed = requireNotNull(parseCloudRemote(envelope))
+        assertEquals(123L, parsed.updatedAt)
+        assertEquals("device-a", parsed.deviceId)
+        assertEquals("commit-a", parsed.commitId)
+        assertEquals(16, JSONObject(parsed.payload).getInt("version"))
+        assertEquals("value", parsed.syncPayload?.getString("changedLessons"))
+    }
+
+    @Test
+    fun corruptedCloudEnvelopeIsRejected() {
+        val envelope = buildCloudEnvelope(
+            updatedAt = 123L,
+            deviceId = "device-a",
+            commitId = "commit-a",
+            payload = JSONObject().put("schema", "nittc-scheduler").put("version", 16),
+            syncPayload = JSONObject().put("syncProtocolVersion", 3)
+        )
+        val corrupted = JSONObject(envelope).apply {
+            getJSONObject("payload").put("version", 15)
+        }.toString()
+
+        assertNull(parseCloudRemote(corrupted))
+    }
+
+    @Test
+    fun versionTwoCloudEnvelopeRemainsReadable() {
+        val legacy = JSONObject()
+            .put("schema", CLOUD_ENVELOPE_SCHEMA)
+            .put("version", 2)
+            .put("updatedAt", 10L)
+            .put("deviceId", "old-device")
+            .put("payload", JSONObject().put("schema", "nittc-scheduler").put("version", 16))
+            .toString()
+
+        val parsed = requireNotNull(parseCloudRemote(legacy))
+        assertEquals(10L, parsed.updatedAt)
+        assertNull(parsed.syncPayload)
+    }
+
+    @Test
+    fun unknownFutureCloudEnvelopeIsRejected() {
+        val future = JSONObject(buildCloudEnvelope(
+            updatedAt = 123L,
+            deviceId = "device-a",
+            commitId = "commit-a",
+            payload = JSONObject().put("schema", "nittc-scheduler").put("version", 16),
+            syncPayload = JSONObject().put("syncProtocolVersion", 3)
+        )).put("version", CURRENT_CLOUD_ENVELOPE_VERSION + 1).toString()
+
+        assertNull(parseCloudRemote(future))
     }
 }

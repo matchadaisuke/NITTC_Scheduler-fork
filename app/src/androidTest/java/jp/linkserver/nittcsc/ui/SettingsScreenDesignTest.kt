@@ -161,7 +161,6 @@ class SettingsItemInteractionTest {
                         progressCountsDown = countsDown,
                         liveUpdateEarlyMinutes = 1,
                         chipMode = LessonStartNotificationChipMode.MINUTE_TEXT,
-                        minutesBefore = "10",
                         exclusions = emptyList(),
                         subjectSuggestions = emptyList(),
                         subjectTeacherCandidates = emptyMap(),
@@ -172,7 +171,6 @@ class SettingsItemInteractionTest {
                         onToggleProgressCountsDown = { countsDown = it; directionChanges++ },
                         onUpdateLiveUpdateEarlyMinutes = {},
                         onUpdateChipMode = {},
-                        onMinutesBeforeChange = {},
                         onAddExclusion = { _, _, _ -> },
                         onDeleteExclusion = {}
                     )

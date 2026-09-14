@@ -5,6 +5,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -46,7 +47,11 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             val uiDesignMode by viewModel.uiDesignMode.collectAsStateWithLifecycle()
-            AppTheme(uiDesignMode = uiDesignMode) {
+            val appThemeMode by viewModel.appThemeMode.collectAsStateWithLifecycle()
+            AppTheme(
+                uiDesignMode = uiDesignMode,
+                darkTheme = appThemeMode.isDark(isSystemInDarkTheme())
+            ) {
                 NittcSchedulerApp(viewModel = viewModel)
             }
         }
@@ -63,6 +68,7 @@ class MainActivity : ComponentActivity() {
             viewModel.refreshAcademicYear()
             WidgetUpdater.updateTaskWidgets(this@MainActivity)
             WidgetUpdater.updateAll(this@MainActivity)
+            CloudFileSyncManager.requestSync(this@MainActivity)
             viewModel.runAutoSync()
         }
     }

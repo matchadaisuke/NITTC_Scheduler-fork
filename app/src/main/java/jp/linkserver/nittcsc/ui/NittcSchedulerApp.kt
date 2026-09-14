@@ -1969,6 +1969,7 @@ private fun NittcSchedulerContent(viewModel: SchedulerViewModel, startOnTimetabl
                     onToggleDrawerNavigation = viewModel::toggleDrawerNavigation,
                     onOpenSpecialTimetableSettings = { showSpecialTimetableSettings = true },
                     onUpdateUiDesignMode = viewModel::updateUiDesignMode,
+                    onUpdateAppThemeMode = viewModel::updateAppThemeMode,
                     onAcknowledgeExpressiveWarning = viewModel::acknowledgeExpressiveWarning,
                     onToggleAddTasksToCalendar = { enabled ->
                         if (enabled && !hasCalendarPermission(context)) {

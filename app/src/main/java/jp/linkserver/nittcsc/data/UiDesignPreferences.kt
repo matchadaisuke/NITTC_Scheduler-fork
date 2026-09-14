@@ -33,6 +33,10 @@ class UiDesignPreferences(
         UiDesignMode.fromStoredValue(preferences[Keys.UI_DESIGN_MODE])
     }
 
+    val appThemeMode: Flow<AppThemeMode> = safePreferences.map { preferences ->
+        AppThemeMode.fromStoredValue(preferences[Keys.APP_THEME_MODE])
+    }
+
     val expressiveWarningAcknowledged: Flow<Boolean> = safePreferences.map { preferences ->
         preferences[Keys.EXPRESSIVE_WARNING_ACKNOWLEDGED] ?: false
     }
@@ -40,6 +44,12 @@ class UiDesignPreferences(
     suspend fun setUiDesignMode(mode: UiDesignMode) {
         dataStore.edit { preferences ->
             preferences[Keys.UI_DESIGN_MODE] = mode.name
+        }
+    }
+
+    suspend fun setAppThemeMode(mode: AppThemeMode) {
+        dataStore.edit { preferences ->
+            preferences[Keys.APP_THEME_MODE] = mode.name
         }
     }
 
@@ -51,6 +61,7 @@ class UiDesignPreferences(
 
     private object Keys {
         val UI_DESIGN_MODE = stringPreferencesKey("ui_design_mode")
+        val APP_THEME_MODE = stringPreferencesKey("app_theme_mode")
         val EXPRESSIVE_WARNING_ACKNOWLEDGED =
             booleanPreferencesKey("material_3_expressive_warning_acknowledged")
     }

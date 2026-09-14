@@ -442,7 +442,7 @@ internal class SchedulerDataTransfer(
         return root
     }
 
-    suspend fun applySyncPayload(payload: org.json.JSONObject) {
+    suspend fun applySyncPayload(payload: org.json.JSONObject) = db.withTransaction {
         requireCurrentSyncProtocol(payload)
         val touchedDatasets = mutableSetOf<String>()
 

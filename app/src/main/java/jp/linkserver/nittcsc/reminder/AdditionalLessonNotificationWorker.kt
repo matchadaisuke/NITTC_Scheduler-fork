@@ -404,7 +404,8 @@ private suspend fun deliverAdditionalNotification(
     val notification = NotificationCompat.Builder(context, CHANNEL_ID_SHARED)
         .setSmallIcon(R.drawable.ic_notification_school)
         .setContentTitle(title)
-        .setContentText(body.lineSequence().firstOrNull().orEmpty())
+        // Wear OS may use contentText instead of the expanded BigTextStyle payload.
+        .setContentText(body)
         .setStyle(NotificationCompat.BigTextStyle().bigText(body))
         .setPriority(NotificationCompat.PRIORITY_HIGH)
         .setCategory(NotificationCompat.CATEGORY_ALARM)

@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import jp.linkserver.nittcsc.data.DayType
+import jp.linkserver.nittcsc.data.AppThemeMode
 import jp.linkserver.nittcsc.data.DayTypeEntity
 import jp.linkserver.nittcsc.data.ChangedLessonEntity
 import jp.linkserver.nittcsc.data.ExamDayScheduleEntity
@@ -91,6 +92,7 @@ private data class ExamDataBundle(
 private data class SyncAndDesignState(
     val syncDiagnostics: SyncDiagnostics,
     val uiDesignMode: UiDesignMode,
+    val appThemeMode: AppThemeMode,
     val expressiveWarningAcknowledged: Boolean
 )
 
@@ -117,6 +119,7 @@ data class SchedulerUiState(
     val cancelledLessons: Set<Pair<LocalDate, Int>> = emptySet(),
     val syncDiagnostics: SyncDiagnostics = SyncDiagnostics(),
     val uiDesignMode: UiDesignMode = UiDesignMode.MATERIAL_3,
+    val appThemeMode: AppThemeMode = AppThemeMode.SYSTEM,
     val expressiveWarningAcknowledged: Boolean = false
 )
 
@@ -140,14 +143,22 @@ class SchedulerViewModel(
         initialValue = UiDesignMode.MATERIAL_3
     )
 
+    val appThemeMode: StateFlow<AppThemeMode> = repository.appThemeModeFlow.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.Eagerly,
+        initialValue = AppThemeMode.SYSTEM
+    )
+
     private val syncAndDesignFlow = combine(
         syncDiagnosticsFlow,
         uiDesignMode,
+        appThemeMode,
         repository.expressiveWarningAcknowledgedFlow
-    ) { syncDiagnostics, designMode, warningAcknowledged ->
+    ) { syncDiagnostics, designMode, themeMode, warningAcknowledged ->
         SyncAndDesignState(
             syncDiagnostics = syncDiagnostics,
             uiDesignMode = designMode,
+            appThemeMode = themeMode,
             expressiveWarningAcknowledged = warningAcknowledged
         )
     }
@@ -251,6 +262,7 @@ class SchedulerViewModel(
             cancelledLessons = cancelledLessons.map { it.date to it.slotIndex }.toSet(),
             syncDiagnostics = syncAndDesign.syncDiagnostics,
             uiDesignMode = syncAndDesign.uiDesignMode,
+            appThemeMode = syncAndDesign.appThemeMode,
             expressiveWarningAcknowledged = syncAndDesign.expressiveWarningAcknowledged
         )
     }.stateIn(
@@ -600,6 +612,10 @@ class SchedulerViewModel(
 
     fun updateUiDesignMode(mode: UiDesignMode) {
         launchRepositoryUpdate { repository.updateUiDesignMode(mode) }
+    }
+
+    fun updateAppThemeMode(mode: AppThemeMode) {
+        launchRepositoryUpdate { repository.updateAppThemeMode(mode) }
     }
 
     fun acknowledgeExpressiveWarning() {

@@ -260,7 +260,9 @@ class LessonStartNotificationWorker(
         return NotificationCompat.Builder(applicationContext, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification_school)
             .setContentTitle(title)
-            .setContentText(body.lineSequence().firstOrNull().orEmpty())
+            // Wear OS may render contentText without expanding BigTextStyle.
+            // Keep the complete customized body here so lines after the first are bridged too.
+            .setContentText(body)
             .setStyle(NotificationCompat.BigTextStyle().bigText(body))
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setCategory(NotificationCompat.CATEGORY_ALARM)
@@ -805,7 +807,7 @@ class LessonStartNotificationWorker(
             val notification = NotificationCompat.Builder(appContext, CHANNEL_ID)
                 .setSmallIcon(R.drawable.ic_notification_school)
                 .setContentTitle(title)
-                .setContentText(body.lineSequence().firstOrNull().orEmpty())
+                .setContentText(body)
                 .setStyle(NotificationCompat.BigTextStyle().bigText(body))
                 .setPriority(NotificationCompat.PRIORITY_MAX)
                 .setCategory(NotificationCompat.CATEGORY_ALARM)

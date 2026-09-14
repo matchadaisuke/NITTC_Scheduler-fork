@@ -67,6 +67,7 @@ class SchedulerRepository(
     val uiDesignModeFlow: Flow<UiDesignMode> = uiDesignPreferences.uiDesignMode.map { mode ->
         mode.effective(InternalFeatureFlags.MATERIAL_3_EXPRESSIVE)
     }
+    val appThemeModeFlow: Flow<AppThemeMode> = uiDesignPreferences.appThemeMode
     val expressiveWarningAcknowledgedFlow: Flow<Boolean> =
         uiDesignPreferences.expressiveWarningAcknowledged
     val dayTypesFlow: Flow<List<DayTypeEntity>> = dao.observeDayTypes()
@@ -389,6 +390,10 @@ class SchedulerRepository(
         uiDesignPreferences.setUiDesignMode(
             mode.effective(InternalFeatureFlags.MATERIAL_3_EXPRESSIVE)
         )
+    }
+
+    suspend fun updateAppThemeMode(mode: AppThemeMode) {
+        uiDesignPreferences.setAppThemeMode(mode)
     }
 
     suspend fun acknowledgeExpressiveWarning() {

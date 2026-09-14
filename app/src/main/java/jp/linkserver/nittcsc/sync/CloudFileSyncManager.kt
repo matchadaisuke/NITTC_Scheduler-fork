@@ -41,8 +41,6 @@ object CloudFileSyncManager {
     private const val KEY_LOCAL_DIRTY_AT = "local_dirty_at"
     private const val KEY_LAST_STATUS = "last_status"
 
-    private const val CLOUD_SCHEMA = "nittc-scheduler-cloud-sync"
-    private const val CLOUD_VERSION = 2
     private const val REMOTE_FOLDER_NAME = "NITTC Scheduler"
     private const val REMOTE_FILE_NAME = "scheduler-sync.json"
     private const val USER_AGENT = "NITTC-Scheduler/MEGA-Sync"
@@ -51,6 +49,7 @@ object CloudFileSyncManager {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val syncMutex = Mutex()
     private val runtimeMutex = Mutex()
+    private val dirtyStateLock = Any()
     private val applyingRemote = AtomicBoolean(false)
     private var databaseObserver: InvalidationTracker.Observer? = null
 
@@ -249,7 +248,7 @@ object CloudFileSyncManager {
             } else {
                 null
             }
-            val remote = remoteText?.let(::parseRemote)
+            val remote = remoteText?.let(::parseCloudRemote)
             if (!remoteText.isNullOrBlank() && remote == null) {
                 return@withLock syncResult(
                     appContext,
@@ -261,6 +260,9 @@ object CloudFileSyncManager {
             val dirty = preferences.getBoolean(KEY_LOCAL_DIRTY, false)
             val dirtyAt = preferences.getLong(KEY_LOCAL_DIRTY_AT, 0L)
             val lastRemote = preferences.getLong(KEY_LAST_REMOTE_UPDATED_AT, 0L)
+            val remoteChanged = remote != null &&
+                remote.updatedAt > lastRemote &&
+                remote.deviceId != localDeviceId
             val snapshotChoice = remote?.let {
                 chooseCloudSnapshot(
                     localDirty = dirty,
@@ -268,9 +270,45 @@ object CloudFileSyncManager {
                     remoteUpdatedAt = it.updatedAt
                 )
             }
+            var mergedRemoteChanges = false
+            if (!preferRemote && dirty && remoteChanged && remote.syncPayload != null) {
+                val mergedPayload = captureSyncFailure {
+                    val localPayload = repository(appContext).exportSyncPayload()
+                    SyncPayloadCoordinator().buildMergedPayload(
+                        localPayload = localPayload,
+                        remotePayload = remote.syncPayload,
+                        remoteDeviceId = remote.deviceId,
+                        resolutions = emptyMap()
+                    )
+                }.getOrElse {
+                    return@withLock syncResult(
+                        appContext,
+                        CloudSyncDisposition.PERMANENT_FAILURE,
+                        "MEGA同期データの競合を解決できません: ${it.userMessage()}"
+                    )
+                }
+                val applied = try {
+                    applyingRemote.set(true)
+                    captureSyncFailure {
+                        repository(appContext).applySyncPayload(mergedPayload)
+                    }
+                } finally {
+                    applyingRemote.set(false)
+                }
+                if (applied.isFailure) {
+                    return@withLock syncResult(
+                        appContext,
+                        CloudSyncDisposition.PERMANENT_FAILURE,
+                        "MEGA同期データの統合に失敗しました: ${applied.exceptionOrNull().userMessage()}"
+                    )
+                }
+                NotificationRebuildCoordinator.rebuild(appContext, "cloud_sync_merge")
+                mergedRemoteChanges = true
+                Log.i(TAG, "concurrent cloud edits merged by dataset metadata")
+            }
             val shouldPull = remote != null && remote.payload.isNotBlank() && (
                 preferRemote ||
-                    (remote.updatedAt > lastRemote && remote.deviceId != localDeviceId &&
+                    (remoteChanged && !mergedRemoteChanges &&
                         snapshotChoice == CloudSnapshotChoice.REMOTE)
             )
 
@@ -287,14 +325,11 @@ object CloudFileSyncManager {
                 val imported = try {
                     applyingRemote.set(true)
                     captureSyncFailure {
-                        repository(appContext).importAllData(remote.payload, requireSettings = true)
-                        NotificationRebuildCoordinator.rebuild(appContext, "cloud_sync_pull")
-                        val stateStored = preferences.edit()
-                            .putLong(KEY_LAST_REMOTE_UPDATED_AT, remote.updatedAt)
-                            .putBoolean(KEY_LOCAL_DIRTY, false)
-                            .putLong(KEY_LOCAL_DIRTY_AT, 0L)
-                            .commit()
-                        check(stateStored) { "同期状態を端末へ保存できませんでした" }
+                        val repository = repository(appContext)
+                        repository.importAllData(remote.payload, requireSettings = true)
+                        // Version 3 keeps per-dataset metadata beside the full backup payload.
+                        // Restore it after legacy import timestamps have been generated.
+                        remote.syncPayload?.let { repository.applySyncPayload(it) }
                     }
                 } finally {
                     applyingRemote.set(false)
@@ -306,6 +341,29 @@ object CloudFileSyncManager {
                         "MEGA同期データの適用に失敗しました: ${imported.exceptionOrNull().userMessage()}"
                     )
                 }
+                NotificationRebuildCoordinator.rebuild(appContext, "cloud_sync_pull")
+                val (stateStored, changedDuringPull) = synchronized(dirtyStateLock) {
+                    val latestDirtyAt = preferences.getLong(KEY_LOCAL_DIRTY_AT, 0L)
+                    val changed = latestDirtyAt != dirtyAt
+                    val editor = preferences.edit().putLong(KEY_LAST_REMOTE_UPDATED_AT, remote.updatedAt)
+                    if (!changed) {
+                        editor
+                            .putBoolean(KEY_LOCAL_DIRTY, false)
+                            .putLong(KEY_LOCAL_DIRTY_AT, 0L)
+                    }
+                    editor.commit() to changed
+                }
+                if (!stateStored || changedDuringPull) {
+                    return@withLock syncResult(
+                        appContext,
+                        CloudSyncDisposition.RETRY,
+                        if (stateStored) {
+                            "同期中に新しい変更を検出したため再同期します"
+                        } else {
+                            "MEGAからの同期後、同期状態を端末へ保存できませんでした"
+                        }
+                    )
+                }
                 return@withLock syncResult(
                     appContext,
                     CloudSyncDisposition.SUCCESS,
@@ -313,9 +371,10 @@ object CloudFileSyncManager {
                 )
             }
 
-            if (remote == null || dirty) {
-                val payload = captureSyncFailure {
-                    repository(appContext).exportAllData()
+            if (remote == null || dirty || mergedRemoteChanges) {
+                val payloads = captureSyncFailure {
+                    val repository = repository(appContext)
+                    JSONObject(repository.exportAllData()) to repository.exportSyncPayload()
                 }.getOrElse {
                     return@withLock syncResult(
                         appContext,
@@ -324,13 +383,14 @@ object CloudFileSyncManager {
                     )
                 }
                 val updatedAt = maxOf(System.currentTimeMillis(), (remote?.updatedAt ?: 0L) + 1L)
-                val envelope = JSONObject().apply {
-                    put("schema", CLOUD_SCHEMA)
-                    put("version", CLOUD_VERSION)
-                    put("updatedAt", updatedAt)
-                    put("deviceId", localDeviceId)
-                    put("payload", JSONObject(payload))
-                }.toString(2)
+                val commitId = UUID.randomUUID().toString()
+                val envelope = buildCloudEnvelope(
+                    updatedAt = updatedAt,
+                    deviceId = localDeviceId,
+                    commitId = commitId,
+                    payload = payloads.first,
+                    syncPayload = payloads.second
+                )
                 val uploaded = captureSyncFailure {
                     mega.uploadText(folder, REMOTE_FILE_NAME, envelope)
                 }
@@ -341,16 +401,34 @@ object CloudFileSyncManager {
                         uploaded.exceptionOrNull()
                     )
                 }
-                val latestDirtyAt = preferences.getLong(KEY_LOCAL_DIRTY_AT, 0L)
-                val changedDuringUpload = latestDirtyAt != dirtyAt
-                val stateEditor = preferences.edit()
-                    .putLong(KEY_LAST_REMOTE_UPDATED_AT, updatedAt)
-                if (!changedDuringUpload) {
-                    stateEditor
-                        .putBoolean(KEY_LOCAL_DIRTY, false)
-                        .putLong(KEY_LOCAL_DIRTY_AT, 0L)
+                val verified = captureSyncFailure {
+                    val uploadedNode = mega.getChild(folder, REMOTE_FILE_NAME)
+                        ?: error("アップロードした同期ファイルが見つかりません")
+                    val uploadedRemote = parseCloudRemote(mega.downloadText(uploadedNode))
+                        ?: error("アップロードした同期ファイルの検証に失敗しました")
+                    check(uploadedRemote.commitId == commitId) {
+                        "別端末の更新と競合したため、再同期が必要です"
+                    }
                 }
-                val stateStored = stateEditor.commit()
+                if (verified.isFailure) {
+                    return@withLock failureResult(
+                        appContext,
+                        "MEGAへのアップロードを確認できません",
+                        verified.exceptionOrNull()
+                    )
+                }
+                val (stateStored, changedDuringUpload) = synchronized(dirtyStateLock) {
+                    val latestDirtyAt = preferences.getLong(KEY_LOCAL_DIRTY_AT, 0L)
+                    val changed = latestDirtyAt != dirtyAt
+                    val stateEditor = preferences.edit()
+                        .putLong(KEY_LAST_REMOTE_UPDATED_AT, updatedAt)
+                    if (!changed) {
+                        stateEditor
+                            .putBoolean(KEY_LOCAL_DIRTY, false)
+                            .putLong(KEY_LOCAL_DIRTY_AT, 0L)
+                    }
+                    stateEditor.commit() to changed
+                }
                 if (!stateStored) {
                     return@withLock syncResult(
                         appContext,
@@ -436,12 +514,14 @@ object CloudFileSyncManager {
     private fun markLocalDirty(context: Context) {
         if (!isConfigured(context)) return
         val preferences = prefs(context)
-        val previousDirtyAt = preferences.getLong(KEY_LOCAL_DIRTY_AT, 0L)
-        val dirtyAt = nextCloudDirtyTimestamp(System.currentTimeMillis(), previousDirtyAt)
-        val stored = preferences.edit()
-            .putBoolean(KEY_LOCAL_DIRTY, true)
-            .putLong(KEY_LOCAL_DIRTY_AT, dirtyAt)
-            .commit()
+        val stored = synchronized(dirtyStateLock) {
+            val previousDirtyAt = preferences.getLong(KEY_LOCAL_DIRTY_AT, 0L)
+            val dirtyAt = nextCloudDirtyTimestamp(System.currentTimeMillis(), previousDirtyAt)
+            preferences.edit()
+                .putBoolean(KEY_LOCAL_DIRTY, true)
+                .putLong(KEY_LOCAL_DIRTY_AT, dirtyAt)
+                .commit()
+        }
         if (!stored) Log.w(TAG, "local dirty state could not be persisted")
     }
 
@@ -449,21 +529,6 @@ object CloudFileSyncManager {
         if (!isConfigured(context)) return
         CloudFileSyncWorker.enqueueImmediate(context)
     }
-
-    private fun parseRemote(text: String): RemoteSnapshot? = runCatching {
-        val root = JSONObject(text)
-        if (root.optString("schema") == CLOUD_SCHEMA) {
-            RemoteSnapshot(
-                updatedAt = root.optLong("updatedAt", 0L),
-                deviceId = root.optString("deviceId", ""),
-                payload = root.getJSONObject("payload").toString()
-            )
-        } else if (root.optString("schema") == "nittc-scheduler" || root.has("version")) {
-            RemoteSnapshot(0L, "legacy", root.toString())
-        } else {
-            null
-        }
-    }.getOrNull()
 
     private fun repository(context: Context): SchedulerRepository = SchedulerRepository(
         AppDatabase.getInstance(context),
@@ -522,11 +587,6 @@ object CloudFileSyncManager {
         return value
     }
 
-    private data class RemoteSnapshot(
-        val updatedAt: Long,
-        val deviceId: String,
-        val payload: String
-    )
 }
 
 private class MegaRuntime(

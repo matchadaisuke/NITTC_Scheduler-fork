@@ -44,7 +44,7 @@ class AcademicYearRepositoryTest {
         repository.initialize(preparationDate)
 
         assertTrue(repository.prepareNextAcademicYear(preparationDate))
-        assertEquals(20, dao.countLessons(2027, TimetableTerm.FIRST))
+        assertEquals(24, dao.countLessons(2027, TimetableTerm.FIRST))
         assertEquals(0, dao.countLessons(2027, TimetableTerm.SECOND))
 
         repository.upsertLesson(
@@ -118,7 +118,7 @@ class AcademicYearRepositoryTest {
         assertTrue(repository.prepareNextAcademicYear(LocalDate.of(2027, 2, 1)))
 
         assertEquals(2026, dao.getSettings()?.activeAcademicYear)
-        assertEquals(20, dao.countLessons(2027, TimetableTerm.FIRST))
+        assertEquals(24, dao.countLessons(2027, TimetableTerm.FIRST))
         assertEquals(0, dao.countLessons(2027, TimetableTerm.SECOND))
     }
 
@@ -129,7 +129,7 @@ class AcademicYearRepositoryTest {
 
         assertTrue(repository.prepareNextAcademicYear(preparationDate))
 
-        assertEquals(20, dao.countLessons(2028, TimetableTerm.FIRST))
+        assertEquals(24, dao.countLessons(2028, TimetableTerm.FIRST))
         assertEquals(0, dao.countLessons(2028, TimetableTerm.SECOND))
     }
 

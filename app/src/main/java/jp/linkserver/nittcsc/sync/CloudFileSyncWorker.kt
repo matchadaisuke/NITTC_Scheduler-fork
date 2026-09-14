@@ -9,6 +9,7 @@ import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.OutOfQuotaPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
@@ -99,11 +100,14 @@ class CloudFileSyncWorker(
                         .build()
                 )
                 .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
+                .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
                 .addTag(IMMEDIATE_WORK_NAME)
                 .build()
             WorkManager.getInstance(context.applicationContext).enqueueUniqueWork(
                 IMMEDIATE_WORK_NAME,
-                ExistingWorkPolicy.KEEP,
+                // Queue one more pass when a database edit arrives during an active sync.
+                // KEEP would discard that request and leave the edit pending until periodic sync.
+                ExistingWorkPolicy.APPEND_OR_REPLACE,
                 request
             )
             Log.i(TAG, "immediate sync enqueue requested workId=${request.id}")

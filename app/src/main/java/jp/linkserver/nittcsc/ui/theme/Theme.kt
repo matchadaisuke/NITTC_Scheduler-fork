@@ -11,6 +11,10 @@ import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.movableContentOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -118,6 +122,10 @@ fun AppTheme(
         UiDesignMode.MATERIAL_3 -> Shapes
         UiDesignMode.MATERIAL_3_EXPRESSIVE -> ExpressiveShapes
     }
+    val latestContent by rememberUpdatedState(content)
+    val movableContent = remember {
+        movableContentOf { latestContent() }
+    }
 
     CompositionLocalProvider(LocalUiDesignMode provides effectiveMode) {
         when (effectiveMode) {
@@ -125,14 +133,14 @@ fun AppTheme(
                 colorScheme = colorScheme,
                 typography = typography,
                 shapes = shapes,
-                content = content
+                content = movableContent
             )
             UiDesignMode.MATERIAL_3_EXPRESSIVE -> MaterialExpressiveTheme(
                 colorScheme = colorScheme,
                 motionScheme = MotionScheme.expressive(),
                 typography = typography,
                 shapes = shapes,
-                content = content
+                content = movableContent
             )
         }
     }
