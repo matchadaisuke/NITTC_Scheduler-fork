@@ -1394,6 +1394,7 @@ fun SettingsScreen(
                     onUpdate = onUpdateLessonNotificationCustomization
                 )
             }
+            SchoolDepartureReminderSettingsContent()
         }
 
         // ── 表示設定 ──────────────────────────────────────────

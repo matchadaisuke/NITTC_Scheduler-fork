@@ -12,15 +12,12 @@ import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.SystemClock
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.TimeoutCancellationException
-import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CoroutineScope
@@ -61,7 +58,6 @@ object CloudFileSyncManager {
     private const val USER_AGENT = "NITTC-Scheduler/MEGA-Sync"
     private const val TAG = "MegaSync"
     private const val SOFT_SYNC_MIN_INTERVAL_MS = 30_000L
-    private const val NOTIFICATION_SYNC_TIMEOUT_MS = 10_000L
     private const val NOTIFICATION_SYNC_FRESH_MS = 60_000L
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -82,8 +78,6 @@ object CloudFileSyncManager {
     private val activeSyncCount = AtomicInteger(0)
     private val lastSuccessElapsed = AtomicLong(-1L)
     private val softSyncRunning = java.util.concurrent.atomic.AtomicBoolean(false)
-    private val preNotificationLock = Any()
-    private var preNotificationJob: Deferred<CloudSyncExecutionResult>? = null
 
     private val watchedTables = arrayOf(
         "settings",
@@ -162,36 +156,30 @@ object CloudFileSyncManager {
     }
 
     /**
-     * 通知を出す「直前」に最新データへ追従するための同期。
-     * - 未設定・オフライン・直近に同期済みなら即座に戻る（通知を遅らせない）
-     * - 同期自体は呼び出し元と切り離して走らせ、待つのは最大 [timeoutMs] まで
-     *   （コールドスタート直後のMEGA再接続が長引いても同期は継続する）
-     * - 例外は一切投げない。失敗しても通知は必ず出す。
+     * 通知の配信と「同時に」最新データへ追従する。通知は待たせない（この関数は即座に戻る）。
+     * - 同期は別コルーチンで開始し、失敗時は [syncWithRetry] が数回やり直す
+     * - 通知直後にプロセスが終了しても完了するよう、WorkManager（expedited）にも積む
+     * - 未設定・オフライン・直近に同期済みなら何もしない。例外は投げない
+     * 同期で内容が変わった場合は、取り込み後の再スケジュールで以降の通知に反映される。
      */
-    suspend fun syncBeforeNotification(
-        context: Context,
-        reason: String,
-        timeoutMs: Long = NOTIFICATION_SYNC_TIMEOUT_MS
-    ) {
+    fun syncAlongsideNotification(context: Context, reason: String) {
         val appContext = context.applicationContext
         try {
             if (!isConfigured(appContext)) return
             val last = lastSuccessElapsed.get()
             if (last >= 0L && SystemClock.elapsedRealtime() - last < NOTIFICATION_SYNC_FRESH_MS) return
             if (!isNetworkAvailable(appContext)) return
-            val job = synchronized(preNotificationLock) {
-                preNotificationJob?.takeIf { it.isActive } ?: scope.async {
-                    syncWithRetry(appContext, reason, maxAttempts = 2)
-                }.also { preNotificationJob = it }
+            CloudFileSyncWorker.enqueueImmediate(appContext)
+            if (!softSyncRunning.compareAndSet(false, true)) return
+            scope.launch {
+                try {
+                    syncWithRetry(appContext, reason, maxAttempts = 3)
+                } finally {
+                    softSyncRunning.set(false)
+                }
             }
-            val finished = withTimeoutOrNull(timeoutMs) { job.await() }
-            if (finished == null) {
-                Log.w(TAG, "pre-notification sync still running after ${timeoutMs}ms reason=$reason")
-            }
-        } catch (cancelled: CancellationException) {
-            throw cancelled
         } catch (error: Throwable) {
-            Log.w(TAG, "pre-notification sync failed reason=$reason", error)
+            Log.w(TAG, "sync alongside notification failed reason=$reason", error)
         }
     }
 

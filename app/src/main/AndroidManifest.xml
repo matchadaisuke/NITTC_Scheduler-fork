@@ -109,6 +109,10 @@
             android:name=".reminder.PlanReminderAlarmReceiver"
             android:exported="false" />
 
+        <receiver
+            android:name=".reminder.SchoolDepartureReminderReceiver"
+            android:exported="false" />
+
         <!-- App Widgets -->
         <receiver
             android:name=".widget.TimetableSmallWidgetReceiver"

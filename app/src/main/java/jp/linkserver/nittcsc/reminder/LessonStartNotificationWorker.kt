@@ -87,8 +87,8 @@ class LessonStartNotificationWorker(
 
         ReminderDebug.log("lesson worker started date=$date slotIndex=$slotIndex")
 
-        // 通知内容を組み立てる前に最新データへ追従する（失敗・オフラインでも続行）。
-        CloudFileSyncManager.syncBeforeNotification(applicationContext, "lesson_worker")
+        // 通知は待たせず、同期は同時に走らせる。
+        CloudFileSyncManager.syncAlongsideNotification(applicationContext, "lesson_worker")
 
         val dao = AppDatabase.getInstance(applicationContext).schedulerDao()
         val settings = dao.getSettings() ?: return Result.success()

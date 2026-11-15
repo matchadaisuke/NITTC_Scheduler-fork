@@ -39,10 +39,11 @@ private val WidgetPlanColor = ColorProvider(ComposeColor(0xFF2E86C1))
 
 class NextLessonWidget : GlanceAppWidget() {
     override suspend fun provideGlance(context: Context, id: GlanceId) {
-        val data = WidgetDataHelper.load(context)
+        // 読み込みに失敗しても例外でウィジェットごと「読み込めません」にせず、案内表示に切り替える。
+        val data = WidgetDataHelper.loadOrNull(context)
         provideContent {
             GlanceTheme {
-                Content(data)
+                if (data != null) Content(data) else WidgetLoadErrorContent()
             }
         }
     }

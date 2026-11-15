@@ -77,12 +77,12 @@ internal data class AdditionalTriggerSpec(
     val trigger: LessonNotificationTrigger
 )
 
-private data class ScheduledLesson(
+internal data class ScheduledLesson(
     val slot: ClassSlot,
     val lesson: ResolvedLesson
 )
 
-private data class NotificationScheduleSnapshot(
+internal data class NotificationScheduleSnapshot(
     val settings: SettingsEntity,
     val dayTypes: Map<LocalDate, DayTypeEntity>,
     val lessons: Map<LessonKey, LessonEntity>,
@@ -328,9 +328,9 @@ private suspend fun deliverAdditionalNotification(
     triggerKey: String,
     waitForScheduledTime: Boolean
 ): Boolean {
-    // 待機なし（アラームからの定刻配信）は、スナップショット取得前に最新データへ追従する。
+    // 待機なし（アラームからの定刻配信）は、通知を待たせずに同期だけ同時に開始する。
     if (!waitForScheduledTime) {
-        CloudFileSyncManager.syncBeforeNotification(context, "additional_lesson")
+        CloudFileSyncManager.syncAlongsideNotification(context, "additional_lesson")
     }
     val snapshot = loadSnapshot(context) ?: return false
     if (!snapshot.settings.lessonStartNotificationEnabled) return false
@@ -436,7 +436,7 @@ private suspend fun deliverAdditionalNotification(
     return posted
 }
 
-private suspend fun loadSnapshot(context: Context): NotificationScheduleSnapshot? {
+internal suspend fun loadSnapshot(context: Context): NotificationScheduleSnapshot? {
     val dao = AppDatabase.getInstance(context).schedulerDao()
     val settings = dao.getSettings() ?: return null
     val dayTypes = dao.getDayTypesOnce().associateBy { it.date }
@@ -465,7 +465,7 @@ private suspend fun loadSnapshot(context: Context): NotificationScheduleSnapshot
     )
 }
 
-private fun entriesForDate(
+internal fun entriesForDate(
     date: LocalDate,
     snapshot: NotificationScheduleSnapshot
 ): List<ScheduledLesson> {

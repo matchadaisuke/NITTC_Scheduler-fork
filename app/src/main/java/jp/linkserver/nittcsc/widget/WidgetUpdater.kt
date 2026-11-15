@@ -1,6 +1,7 @@
 package jp.linkserver.nittcsc.widget
 
 import android.content.Context
+import android.util.Log
 import androidx.glance.appwidget.GlanceAppWidgetManager
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
@@ -43,7 +44,11 @@ object WidgetUpdater {
                     manager.getGlanceIds(TaskHugeWidget::class.java).forEach { id ->
                         widget.update(appContext, id)
                     }
-                } catch (_: Exception) {}
+                } catch (error: kotlinx.coroutines.CancellationException) {
+                    throw error
+                } catch (error: Exception) {
+                    Log.w("WidgetUpdater", "Widget update failed", error)
+                }
             }
 
             // TaskSmallWidget を更新
@@ -53,7 +58,11 @@ object WidgetUpdater {
                     manager.getGlanceIds(TaskSmallWidget::class.java).forEach { id ->
                         widget.update(appContext, id)
                     }
-                } catch (_: Exception) {}
+                } catch (error: kotlinx.coroutines.CancellationException) {
+                    throw error
+                } catch (error: Exception) {
+                    Log.w("WidgetUpdater", "Widget update failed", error)
+                }
             }
 
             // TimetableSmallWidget を更新
@@ -63,7 +72,11 @@ object WidgetUpdater {
                     manager.getGlanceIds(TimetableSmallWidget::class.java).forEach { id ->
                         widget.update(appContext, id)
                     }
-                } catch (_: Exception) {}
+                } catch (error: kotlinx.coroutines.CancellationException) {
+                    throw error
+                } catch (error: Exception) {
+                    Log.w("WidgetUpdater", "Widget update failed", error)
+                }
             }
 
             // TimetableHugeWidget を更新
@@ -73,7 +86,11 @@ object WidgetUpdater {
                     manager.getGlanceIds(TimetableHugeWidget::class.java).forEach { id ->
                         widget.update(appContext, id)
                     }
-                } catch (_: Exception) {}
+                } catch (error: kotlinx.coroutines.CancellationException) {
+                    throw error
+                } catch (error: Exception) {
+                    Log.w("WidgetUpdater", "Widget update failed", error)
+                }
             }
 
             // NextLessonWidget を更新
@@ -83,7 +100,11 @@ object WidgetUpdater {
                     manager.getGlanceIds(NextLessonWidget::class.java).forEach { id ->
                         widget.update(appContext, id)
                     }
-                } catch (_: Exception) {}
+                } catch (error: kotlinx.coroutines.CancellationException) {
+                    throw error
+                } catch (error: Exception) {
+                    Log.w("WidgetUpdater", "Widget update failed", error)
+                }
             }
         }
     }

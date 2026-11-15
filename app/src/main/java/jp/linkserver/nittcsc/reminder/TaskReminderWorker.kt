@@ -47,7 +47,7 @@ class TaskReminderWorker(
         }
 
         return try {
-            CloudFileSyncManager.syncBeforeNotification(applicationContext, "task_worker")
+            CloudFileSyncManager.syncAlongsideNotification(applicationContext, "task_worker")
             val notificationResult = TaskReminderNotifier.notifyTask(
                 applicationContext,
                 taskId,

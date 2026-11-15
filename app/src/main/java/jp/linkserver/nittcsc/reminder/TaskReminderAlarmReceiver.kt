@@ -28,7 +28,7 @@ class TaskReminderAlarmReceiver : BroadcastReceiver() {
         val appContext = context.applicationContext
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             try {
-                CloudFileSyncManager.syncBeforeNotification(appContext, "task_alarm")
+                CloudFileSyncManager.syncAlongsideNotification(appContext, "task_alarm")
                 val result = TaskReminderNotifier.notifyTask(
                     appContext,
                     taskId,

@@ -17,7 +17,7 @@ class PlanReminderAlarmReceiver : BroadcastReceiver() {
             val appContext = context.applicationContext
             CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
                 try {
-                    CloudFileSyncManager.syncBeforeNotification(appContext, "plan_alarm")
+                    CloudFileSyncManager.syncAlongsideNotification(appContext, "plan_alarm")
                     PlanReminderWorker.deliverAlarmNotification(appContext, planId)
                 } catch (error: Throwable) {
                     ReminderDebug.warn("plan alarm direct delivery failed planId=$planId", error)

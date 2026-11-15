@@ -21,7 +21,7 @@ class AdditionalLessonNotificationAlarmReceiver : BroadcastReceiver() {
         val appContext = context.applicationContext
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             try {
-                CloudFileSyncManager.syncBeforeNotification(appContext, "additional_lesson_alarm")
+                CloudFileSyncManager.syncAlongsideNotification(appContext, "additional_lesson_alarm")
                 AdditionalLessonNotificationWorker.deliverAlarmNotification(
                     appContext,
                     date,

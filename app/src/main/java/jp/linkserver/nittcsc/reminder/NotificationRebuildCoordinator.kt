@@ -20,6 +20,7 @@ object NotificationRebuildCoordinator {
         TaskReminderWorker.rescheduleAll(appContext)
         PlanReminderWorker.rescheduleAll(appContext)
         LessonStartNotificationWorker.rescheduleAll(appContext)
+        SchoolDepartureReminder.rescheduleAll(appContext)
         // 同期・インポート・起動で時間割/課題が変わったら、ウィジェットも必ず追従させる。
         runCatching { WidgetUpdater.updateAll(appContext) }
             .onFailure { Log.w(TAG, "Widget update after rebuild failed", it) }

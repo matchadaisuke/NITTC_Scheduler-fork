@@ -90,6 +90,9 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
@@ -2407,7 +2410,7 @@ private fun NittcSchedulerContent(viewModel: SchedulerViewModel, startOnTimetabl
                             LocalUiDesignMode.current == UiDesignMode.MATERIAL_3_EXPRESSIVE &&
                                 !useDrawerNavigation &&
                                 !useNavigationRail
-                        val tabContent: @Composable (PaddingValues) -> Unit = { padding ->
+                        val tabContentBody: @Composable (PaddingValues) -> Unit = { padding ->
                             Crossfade(
                                 targetState = selectedTab,
                                 modifier = Modifier.fillMaxSize(),
@@ -2660,6 +2663,40 @@ private fun NittcSchedulerContent(viewModel: SchedulerViewModel, startOnTimetabl
                                         dayTypeEntityForDate = { date -> uiState.dayTypeEntities[date] }
                                     )
                                 }
+                            }
+                        }
+                        var pullSyncing by remember { mutableStateOf(false) }
+                        val pullSyncState = rememberPullToRefreshState()
+                        val tabContent: @Composable (PaddingValues) -> Unit = { padding ->
+                            // 上から引っ張って同期。各画面の縦スクロールにそのまま連動する。
+                            PullToRefreshBox(
+                                isRefreshing = pullSyncing,
+                                onRefresh = {
+                                    if (!pullSyncing) {
+                                        pullSyncing = true
+                                        appScope.launch {
+                                            try {
+                                                val message = CloudFileSyncManager.syncNow(context)
+                                                snackbarHostState.showSnackbar(message)
+                                            } finally {
+                                                pullSyncing = false
+                                            }
+                                        }
+                                    }
+                                },
+                                state = pullSyncState,
+                                modifier = Modifier.fillMaxSize(),
+                                indicator = {
+                                    PullToRefreshDefaults.Indicator(
+                                        state = pullSyncState,
+                                        isRefreshing = pullSyncing,
+                                        modifier = Modifier
+                                            .align(Alignment.TopCenter)
+                                            .padding(top = padding.calculateTopPadding())
+                                    )
+                                }
+                            ) {
+                                tabContentBody(padding)
                             }
                         }
                         val selectedTabHighlight = MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)

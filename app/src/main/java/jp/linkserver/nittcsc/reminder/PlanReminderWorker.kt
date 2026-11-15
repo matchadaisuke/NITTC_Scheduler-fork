@@ -35,7 +35,7 @@ class PlanReminderWorker(
         val planId = inputData.getLong(KEY_PLAN_ID, 0L)
         if (planId <= 0L) return Result.success()
 
-        CloudFileSyncManager.syncBeforeNotification(applicationContext, "plan_worker")
+        CloudFileSyncManager.syncAlongsideNotification(applicationContext, "plan_worker")
         deliverNotification(applicationContext, planId, source = "worker")
         return Result.success()
     }

@@ -57,6 +57,22 @@ data class NextLessonWidgetEntry(
 )
 
 object WidgetDataHelper {
+    private const val TAG = "WidgetData"
+
+    /** 直近の読み込み失敗の概要（ウィジェット上の案内表示に使う）。成功すると null に戻る。 */
+    @Volatile
+    internal var lastLoadError: String? = null
+
+    /** 失敗時は握りつぶさずログへ残し、null を返す（キャンセルは再送出）。 */
+    suspend fun loadOrNull(context: Context): WidgetData? = try {
+        load(context).also { lastLoadError = null }
+    } catch (cancelled: kotlinx.coroutines.CancellationException) {
+        throw cancelled
+    } catch (error: Throwable) {
+        android.util.Log.e(TAG, "Widget data load failed", error)
+        lastLoadError = error::class.java.simpleName
+        null
+    }
 
     suspend fun load(context: Context): WidgetData {
         val db = AppDatabase.getInstance(context)

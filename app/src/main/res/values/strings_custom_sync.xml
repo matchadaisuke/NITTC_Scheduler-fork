@@ -31,4 +31,14 @@
     <string name="mega_sync_last_success">最終同期: %1$s</string>
     <string name="mega_sync_never_synced">まだ同期されていません</string>
     <string name="mega_sync_auto_description">起動時・画面に戻ったとき・通知を出す直前・アプリを閉じるときに自動で同期します。失敗しても自動で数回やり直します。</string>
+    <string name="school_departure_channel_name">登校前通知</string>
+    <string name="school_departure_notification_title">そろそろ登校の時間です</string>
+    <string name="school_departure_notification_body">今日の最初の授業は%1$s %2$s（%3$s開始）。あと約%4$d分です。</string>
+    <string name="school_departure_notification_location">場所: %1$s</string>
+    <string name="school_departure_setting_title">登校前通知</string>
+    <string name="school_departure_setting_description">その日の最初の授業が始まる前に通知します。休日や休講日は通知しません。</string>
+    <string name="school_departure_minutes_label">最初の授業の何分前</string>
+    <string name="school_departure_minutes_unit">分前（5〜360）</string>
+    <string name="school_departure_notifications_blocked">通知が許可されていないため、登校前通知は表示されません。</string>
+    <string name="school_departure_open_notification_settings">通知設定を開く</string>
 </resources>
