@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Glance が生成・参照するレイアウトをリソース縮小で消さない（ウィジェットが「読み込めません」になるのを防ぐ） -->
+<resources xmlns:tools="http://schemas.android.com/tools"
+    tools:keep="@layout/*" />
