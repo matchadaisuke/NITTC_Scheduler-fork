@@ -13,6 +13,7 @@ import androidx.work.Operation
 import androidx.work.OutOfQuotaPolicy
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import jp.linkserver.nittcsc.sync.CloudFileSyncManager
 import jp.linkserver.nittcsc.data.AppDatabase
 import jp.linkserver.nittcsc.data.TaskEntity
 import kotlinx.coroutines.CancellationException
@@ -46,6 +47,7 @@ class TaskReminderWorker(
         }
 
         return try {
+            CloudFileSyncManager.syncBeforeNotification(applicationContext, "task_worker")
             val notificationResult = TaskReminderNotifier.notifyTask(
                 applicationContext,
                 taskId,

@@ -3,6 +3,7 @@ package jp.linkserver.nittcsc.reminder
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import jp.linkserver.nittcsc.sync.CloudFileSyncManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -25,6 +26,8 @@ class LessonStartNotificationAlarmReceiver : BroadcastReceiver() {
                 // expedited-work quota or JobScheduler latency cannot make the reminder
                 // miss the worker's late-delivery window. The worker remains responsible
                 // for Live Updates and acts as a second delivery attempt.
+                // 通知を出す直前に最新データへ追従する（失敗・オフラインでも通知は必ず出す）。
+                CloudFileSyncManager.syncBeforeNotification(appContext, "lesson_alarm")
                 LessonStartNotificationWorker.deliverAlarmNotification(
                     appContext,
                     date,

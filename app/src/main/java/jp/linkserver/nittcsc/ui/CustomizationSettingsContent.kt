@@ -19,6 +19,10 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.size
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -375,6 +379,18 @@ internal fun CloudFileSyncSettingsContent() {
     var password by remember { mutableStateOf("") }
     var pin by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
+    val syncState by CloudFileSyncManager.state.collectAsState()
+    val syncing = busy || syncState.isSyncing
+    LaunchedEffect(Unit) { CloudFileSyncManager.refreshState(context) }
+    val lastSyncedText = remember(syncState.lastSuccessAt) {
+        if (syncState.lastSuccessAt > 0L) {
+            java.time.Instant.ofEpochMilli(syncState.lastSuccessAt)
+                .atZone(java.time.ZoneId.systemDefault())
+                .format(java.time.format.DateTimeFormatter.ofPattern("M/d HH:mm"))
+        } else {
+            null
+        }
+    }
     val sdkAvailable = remember {
         Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && CloudFileSyncManager.sdkAvailable()
     }
@@ -466,21 +482,47 @@ internal fun CloudFileSyncSettingsContent() {
                             CloudFileSyncManager.linkedEmail(context).orEmpty()
                         )
                     )
-                    Text(status, style = MaterialTheme.typography.bodyMedium)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = lastSyncedText?.let { stringResource(R.string.mega_sync_last_success, it) }
+                            ?: stringResource(R.string.mega_sync_never_synced),
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Text(
+                        text = syncState.message.ifBlank { status },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (syncState.lastFailed) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        }
+                    )
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         Button(
                             onClick = {
                                 busy = true
                                 scope.launch {
-                                    status = CloudFileSyncManager.syncNow(context)
-                                    busy = false
+                                    try {
+                                        status = CloudFileSyncManager.syncNow(context)
+                                    } finally {
+                                        busy = false
+                                    }
                                 }
                             },
-                            enabled = !busy
+                            enabled = !syncing
                         ) {
+                            if (syncing) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    strokeWidth = 2.dp
+                                )
+                                Spacer(Modifier.width(8.dp))
+                            }
                             Text(
                                 stringResource(
-                                    if (busy) R.string.mega_sync_syncing
+                                    if (syncing) R.string.mega_sync_syncing
                                     else R.string.mega_sync_now_button
                                 )
                             )
@@ -491,11 +533,16 @@ internal fun CloudFileSyncSettingsContent() {
                                 configured = false
                                 status = notConfiguredText
                             },
-                            enabled = !busy
+                            enabled = !syncing
                         ) {
                             Text(stringResource(R.string.mega_sync_disconnect_button))
                         }
                     }
+                    Text(
+                        stringResource(R.string.mega_sync_auto_description),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                     Text(
                         stringResource(R.string.mega_sync_runtime_description),
                         style = MaterialTheme.typography.bodySmall,

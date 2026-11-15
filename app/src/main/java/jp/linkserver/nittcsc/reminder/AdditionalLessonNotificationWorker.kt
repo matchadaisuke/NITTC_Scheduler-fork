@@ -328,6 +328,10 @@ private suspend fun deliverAdditionalNotification(
     triggerKey: String,
     waitForScheduledTime: Boolean
 ): Boolean {
+    // 待機なし（アラームからの定刻配信）は、スナップショット取得前に最新データへ追従する。
+    if (!waitForScheduledTime) {
+        CloudFileSyncManager.syncBeforeNotification(context, "additional_lesson")
+    }
     val snapshot = loadSnapshot(context) ?: return false
     if (!snapshot.settings.lessonStartNotificationEnabled) return false
     val spec = AdditionalLessonNotificationWorker.triggerSpecs(snapshot.settings)
@@ -350,6 +354,14 @@ private suspend fun deliverAdditionalNotification(
             notificationAt
         ).toMillis()
         if (waitMillis > 0L) delay(waitMillis)
+        // 待機後は古いスナップショットを使わず、同期してから定刻配信として組み立て直す。
+        return deliverAdditionalNotification(
+            context,
+            date,
+            slotIndex,
+            triggerKey,
+            waitForScheduledTime = false
+        )
     }
     val remainingMillis = Duration.between(
         LocalDateTime.now(ZoneId.systemDefault()),

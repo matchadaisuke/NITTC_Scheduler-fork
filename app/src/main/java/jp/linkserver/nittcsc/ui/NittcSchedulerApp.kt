@@ -88,6 +88,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
@@ -2739,24 +2741,46 @@ private fun NittcSchedulerContent(viewModel: SchedulerViewModel, startOnTimetabl
                                                         Icon(Icons.Filled.AutoFixHigh, contentDescription = stringResource(R.string.cd_ai_import))
                                                     }
                                                 }
+                                                val cloudSyncState by CloudFileSyncManager.state.collectAsState()
+                                                val syncingDescription = stringResource(R.string.cd_sync_in_progress)
                                                 Box(
                                                     modifier = Modifier
                                                         .size(48.dp)
                                                         .combinedClickable(
                                                             onClick = {
-                                                                appScope.launch {
-                                                                    val message = CloudFileSyncManager.syncNow(context)
-                                                                    snackbarHostState.showSnackbar(message)
+                                                                if (!CloudFileSyncManager.isConfigured(context)) {
+                                                                    // 未設定なら、押した人が次にやることは設定。直接ログイン画面へ。
+                                                                    showSync = true
+                                                                } else if (!cloudSyncState.isSyncing) {
+                                                                    appScope.launch {
+                                                                        val message = CloudFileSyncManager.syncNow(context)
+                                                                        snackbarHostState.showSnackbar(message)
+                                                                    }
                                                                 }
                                                             },
                                                             onLongClick = { showSync = true }
                                                         ),
                                                     contentAlignment = Alignment.Center
                                                 ) {
-                                                    Icon(
-                                                        painter = painterResource(R.drawable.sync_desktop),
-                                                        contentDescription = stringResource(R.string.cd_sync_now_long_press_settings)
-                                                    )
+                                                    if (cloudSyncState.isSyncing) {
+                                                        // 同期中は押しても反応が無いと不安になるため、進行中であることを見せる。
+                                                        CircularProgressIndicator(
+                                                            modifier = Modifier
+                                                                .size(22.dp)
+                                                                .semantics { contentDescription = syncingDescription },
+                                                            strokeWidth = 2.dp
+                                                        )
+                                                    } else {
+                                                        Icon(
+                                                            painter = painterResource(R.drawable.sync_desktop),
+                                                            contentDescription = stringResource(R.string.cd_sync_now_long_press_settings),
+                                                            tint = if (cloudSyncState.lastFailed && CloudFileSyncManager.isConfigured(context)) {
+                                                                MaterialTheme.colorScheme.error
+                                                            } else {
+                                                                LocalContentColor.current
+                                                            }
+                                                        )
+                                                    }
                                                 }
                                                 AppIconButton(onClick = { showSettings = true }) {
                                                     Icon(Icons.Filled.Settings, contentDescription = stringResource(R.string.cd_settings))

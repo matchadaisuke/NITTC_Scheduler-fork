@@ -3,6 +3,7 @@ package jp.linkserver.nittcsc.reminder
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import jp.linkserver.nittcsc.sync.CloudFileSyncManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -27,6 +28,7 @@ class TaskReminderAlarmReceiver : BroadcastReceiver() {
         val appContext = context.applicationContext
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             try {
+                CloudFileSyncManager.syncBeforeNotification(appContext, "task_alarm")
                 val result = TaskReminderNotifier.notifyTask(
                     appContext,
                     taskId,

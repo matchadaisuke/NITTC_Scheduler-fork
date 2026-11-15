@@ -2,7 +2,9 @@ package jp.linkserver.nittcsc.sync
 
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CloudSyncExecutionTest {
@@ -150,5 +152,37 @@ class CloudSyncExecutionTest {
         )).put("version", CURRENT_CLOUD_ENVELOPE_VERSION + 1).toString()
 
         assertNull(parseCloudRemote(future))
+    }
+
+    @Test
+    fun retryDelaysGrowAndAreCapped() {
+        assertEquals(2_000L, cloudSyncRetryDelayMillis(0))
+        assertEquals(5_000L, cloudSyncRetryDelayMillis(1))
+        assertEquals(12_000L, cloudSyncRetryDelayMillis(2))
+        assertEquals(20_000L, cloudSyncRetryDelayMillis(3))
+        assertEquals(20_000L, cloudSyncRetryDelayMillis(50))
+        // 負値でも最短待機に丸め、例外やゼロ待機（連打）にならない。
+        assertEquals(2_000L, cloudSyncRetryDelayMillis(-1))
+    }
+
+    @Test
+    fun inProcessRetryBudgetIsLargerThanBackgroundBudget() {
+        assertTrue(CLOUD_SYNC_IN_PROCESS_MAX_ATTEMPTS > CLOUD_SYNC_BACKGROUND_ATTEMPTS)
+        assertTrue(CLOUD_SYNC_BACKGROUND_ATTEMPTS >= 1)
+    }
+
+    @Test
+    fun executionResultDoesNotRecreateRuntimeByDefault() {
+        val result = CloudSyncExecutionResult(CloudSyncDisposition.RETRY, "x")
+        assertFalse(result.recreateRuntime)
+        assertTrue(CloudSyncExecutionResult(CloudSyncDisposition.RETRY, "x", true).recreateRuntime)
+    }
+
+    @Test
+    fun initialSyncStateIsIdleAndNeverSynced() {
+        val state = CloudSyncState()
+        assertFalse(state.isSyncing)
+        assertEquals(0L, state.lastSuccessAt)
+        assertFalse(state.lastFailed)
     }
 }

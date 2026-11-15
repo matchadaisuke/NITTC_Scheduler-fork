@@ -11,8 +11,33 @@ internal enum class CloudSyncDisposition {
 
 internal data class CloudSyncExecutionResult(
     val disposition: CloudSyncDisposition,
-    val message: String
+    val message: String,
+    /** 通信断などでMEGAセッションが壊れた可能性があり、次回は再接続からやり直すべき場合 true。 */
+    val recreateRuntime: Boolean = false
 )
+
+/** UIへ公開する同期状態。 */
+data class CloudSyncState(
+    val isSyncing: Boolean = false,
+    /** 最後に同期が成功した時刻（epoch millis）。未成功は 0。 */
+    val lastSuccessAt: Long = 0L,
+    val message: String = "",
+    val lastFailed: Boolean = false
+)
+
+/** アプリ内（プロセス内）での再試行回数。手動・起動・復帰・終了時の同期で使う。 */
+internal const val CLOUD_SYNC_IN_PROCESS_MAX_ATTEMPTS = 4
+
+/** WorkManager 内での再試行回数（WorkManager自身のバックオフと二重になるため短め）。 */
+internal const val CLOUD_SYNC_BACKGROUND_ATTEMPTS = 2
+
+/** 失敗 [attempt]（0始まり）回目の後に待つ時間。2秒→5秒→12秒→以降は20秒。 */
+internal fun cloudSyncRetryDelayMillis(attempt: Int): Long = when {
+    attempt <= 0 -> 2_000L
+    attempt == 1 -> 5_000L
+    attempt == 2 -> 12_000L
+    else -> 20_000L
+}
 
 internal const val CLOUD_SYNC_MAX_RETRY_COUNT = 5
 

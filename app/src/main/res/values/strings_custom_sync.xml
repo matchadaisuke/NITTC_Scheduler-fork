@@ -27,4 +27,8 @@
     <string name="mega_sync_disconnect_button">ログアウト / 解除</string>
     <string name="mega_sync_runtime_description">MEGA上の「NITTC Scheduler/scheduler-sync.json」を自動管理します。アプリ実行中はローカルDBとMEGAの変更イベントで同期し、バックグラウンドはWorkManagerで取りこぼしを補完します。</string>
     <string name="mega_sync_status_not_configured">未設定</string>
+    <string name="cd_sync_in_progress">MEGAと同期中</string>
+    <string name="mega_sync_last_success">最終同期: %1$s</string>
+    <string name="mega_sync_never_synced">まだ同期されていません</string>
+    <string name="mega_sync_auto_description">起動時・画面に戻ったとき・通知を出す直前・アプリを閉じるときに自動で同期します。失敗しても自動で数回やり直します。</string>
 </resources>

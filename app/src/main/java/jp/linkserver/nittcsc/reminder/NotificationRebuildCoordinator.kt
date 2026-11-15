@@ -2,6 +2,7 @@ package jp.linkserver.nittcsc.reminder
 
 import android.content.Context
 import android.util.Log
+import jp.linkserver.nittcsc.widget.WidgetUpdater
 
 /**
  * Single entry point for restoring reminder schedules.
@@ -19,5 +20,8 @@ object NotificationRebuildCoordinator {
         TaskReminderWorker.rescheduleAll(appContext)
         PlanReminderWorker.rescheduleAll(appContext)
         LessonStartNotificationWorker.rescheduleAll(appContext)
+        // 同期・インポート・起動で時間割/課題が変わったら、ウィジェットも必ず追従させる。
+        runCatching { WidgetUpdater.updateAll(appContext) }
+            .onFailure { Log.w(TAG, "Widget update after rebuild failed", it) }
     }
 }

@@ -66,11 +66,17 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         lifecycleScope.launch {
             viewModel.refreshAcademicYear()
-            WidgetUpdater.updateTaskWidgets(this@MainActivity)
             WidgetUpdater.updateAll(this@MainActivity)
-            CloudFileSyncManager.requestSync(this@MainActivity)
+            // 画面に戻るたびに最新へ追従（直近30秒以内に成功していれば何もしない。失敗時は自動で再試行）。
+            CloudFileSyncManager.syncSoon(this@MainActivity, "app_resume")
             viewModel.runAutoSync()
         }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        // バックグラウンド移行・終了時に未送信の変更があれば送る（プロセス終了に備えWorkManagerにも積む）。
+        CloudFileSyncManager.syncOnLeave(this)
     }
 
 }

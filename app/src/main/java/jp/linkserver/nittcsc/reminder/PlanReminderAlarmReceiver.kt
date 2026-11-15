@@ -3,6 +3,7 @@ package jp.linkserver.nittcsc.reminder
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import jp.linkserver.nittcsc.sync.CloudFileSyncManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -16,6 +17,7 @@ class PlanReminderAlarmReceiver : BroadcastReceiver() {
             val appContext = context.applicationContext
             CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
                 try {
+                    CloudFileSyncManager.syncBeforeNotification(appContext, "plan_alarm")
                     PlanReminderWorker.deliverAlarmNotification(appContext, planId)
                 } catch (error: Throwable) {
                     ReminderDebug.warn("plan alarm direct delivery failed planId=$planId", error)

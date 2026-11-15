@@ -8,7 +8,21 @@ import jp.linkserver.nittcsc.data.AppDatabase
 import jp.linkserver.nittcsc.data.SchedulerRepository
 import jp.linkserver.nittcsc.data.UiDesignPreferences
 import jp.linkserver.nittcsc.reminder.NotificationRebuildCoordinator
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.os.SystemClock
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.withTimeoutOrNull
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
@@ -40,11 +54,15 @@ object CloudFileSyncManager {
     private const val KEY_LOCAL_DIRTY = "local_dirty"
     private const val KEY_LOCAL_DIRTY_AT = "local_dirty_at"
     private const val KEY_LAST_STATUS = "last_status"
+    private const val KEY_LAST_SUCCESS_AT = "last_success_at"
 
     private const val REMOTE_FOLDER_NAME = "NITTC Scheduler"
     private const val REMOTE_FILE_NAME = "scheduler-sync.json"
     private const val USER_AGENT = "NITTC-Scheduler/MEGA-Sync"
     private const val TAG = "MegaSync"
+    private const val SOFT_SYNC_MIN_INTERVAL_MS = 30_000L
+    private const val NOTIFICATION_SYNC_TIMEOUT_MS = 10_000L
+    private const val NOTIFICATION_SYNC_FRESH_MS = 60_000L
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val syncMutex = Mutex()
@@ -55,6 +73,17 @@ object CloudFileSyncManager {
 
     @Volatile
     private var runtime: MegaRuntime? = null
+
+    private val _state = MutableStateFlow(CloudSyncState())
+
+    /** UIが同期中・最終成功時刻・直近の結果を直感的に表示するための状態。 */
+    val state: StateFlow<CloudSyncState> = _state.asStateFlow()
+
+    private val activeSyncCount = AtomicInteger(0)
+    private val lastSuccessElapsed = AtomicLong(-1L)
+    private val softSyncRunning = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val preNotificationLock = Any()
+    private var preNotificationJob: Deferred<CloudSyncExecutionResult>? = null
 
     private val watchedTables = arrayOf(
         "settings",
@@ -74,10 +103,139 @@ object CloudFileSyncManager {
     fun start(context: Context) {
         val appContext = context.applicationContext
         registerDatabaseObserver(appContext)
+        refreshState(appContext)
         if (!isConfigured(appContext)) return
         CloudFileSyncWorker.schedule(appContext)
-        requestSync(appContext)
+        // 起動時は WorkManager 任せにせず、アプリ内で即座に（失敗時は何度か）同期する。
+        syncSoon(appContext, "app_start", minIntervalMs = 0L)
     }
+
+    /** 保存済みの最終成功時刻・結果文をUI状態へ反映する。 */
+    fun refreshState(context: Context) {
+        val appContext = context.applicationContext
+        val preferences = prefs(appContext)
+        _state.update {
+            it.copy(
+                lastSuccessAt = preferences.getLong(KEY_LAST_SUCCESS_AT, 0L),
+                message = preferences.getString(KEY_LAST_STATUS, null).orEmpty()
+            )
+        }
+    }
+
+    /**
+     * 画面復帰・起動などの「そろそろ同期したい」タイミング用。多重実行を避け、
+     * 直近の成功から [minIntervalMs] 以内なら何もしない。失敗時は [syncWithRetry] が再試行する。
+     */
+    fun syncSoon(context: Context, reason: String, minIntervalMs: Long = SOFT_SYNC_MIN_INTERVAL_MS) {
+        val appContext = context.applicationContext
+        if (!isConfigured(appContext)) return
+        val last = lastSuccessElapsed.get()
+        if (minIntervalMs > 0L && last >= 0L && SystemClock.elapsedRealtime() - last < minIntervalMs) return
+        if (!softSyncRunning.compareAndSet(false, true)) return
+        scope.launch {
+            try {
+                syncWithRetry(appContext, reason)
+            } finally {
+                softSyncRunning.set(false)
+            }
+        }
+    }
+
+    /**
+     * アプリがバックグラウンドへ移る/終了するときに、未送信の変更があれば送る。
+     * プロセスが先に終了しても取りこぼさないよう、WorkManager（expedited）にも積む。
+     */
+    fun syncOnLeave(context: Context) {
+        val appContext = context.applicationContext
+        if (!isConfigured(appContext)) return
+        val dirty = prefs(appContext).getBoolean(KEY_LOCAL_DIRTY, false)
+        if (!dirty) return
+        CloudFileSyncWorker.enqueueImmediate(appContext)
+        if (!softSyncRunning.compareAndSet(false, true)) return
+        scope.launch {
+            try {
+                syncWithRetry(appContext, "app_leave", maxAttempts = 2)
+            } finally {
+                softSyncRunning.set(false)
+            }
+        }
+    }
+
+    /**
+     * 通知を出す「直前」に最新データへ追従するための同期。
+     * - 未設定・オフライン・直近に同期済みなら即座に戻る（通知を遅らせない）
+     * - 同期自体は呼び出し元と切り離して走らせ、待つのは最大 [timeoutMs] まで
+     *   （コールドスタート直後のMEGA再接続が長引いても同期は継続する）
+     * - 例外は一切投げない。失敗しても通知は必ず出す。
+     */
+    suspend fun syncBeforeNotification(
+        context: Context,
+        reason: String,
+        timeoutMs: Long = NOTIFICATION_SYNC_TIMEOUT_MS
+    ) {
+        val appContext = context.applicationContext
+        try {
+            if (!isConfigured(appContext)) return
+            val last = lastSuccessElapsed.get()
+            if (last >= 0L && SystemClock.elapsedRealtime() - last < NOTIFICATION_SYNC_FRESH_MS) return
+            if (!isNetworkAvailable(appContext)) return
+            val job = synchronized(preNotificationLock) {
+                preNotificationJob?.takeIf { it.isActive } ?: scope.async {
+                    syncWithRetry(appContext, reason, maxAttempts = 2)
+                }.also { preNotificationJob = it }
+            }
+            val finished = withTimeoutOrNull(timeoutMs) { job.await() }
+            if (finished == null) {
+                Log.w(TAG, "pre-notification sync still running after ${timeoutMs}ms reason=$reason")
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            Log.w(TAG, "pre-notification sync failed reason=$reason", error)
+        }
+    }
+
+    /**
+     * 失敗しても諦めず、間隔を空けて [maxAttempts] 回まで同期する。
+     * オフラインなら試行せず、接続回復時に WorkManager が実行するよう積む。
+     * 認証切れなど利用者の操作が要る失敗（PERMANENT_FAILURE）では再試行しない。
+     */
+    internal suspend fun syncWithRetry(
+        context: Context,
+        reason: String,
+        preferRemote: Boolean = false,
+        maxAttempts: Int = CLOUD_SYNC_IN_PROCESS_MAX_ATTEMPTS
+    ): CloudSyncExecutionResult {
+        val appContext = context.applicationContext
+        if (!isConfigured(appContext)) {
+            return CloudSyncExecutionResult(CloudSyncDisposition.SUCCESS, "MEGA同期は未設定です")
+        }
+        if (!isNetworkAvailable(appContext)) {
+            CloudFileSyncWorker.enqueueImmediate(appContext)
+            return syncResult(
+                appContext,
+                CloudSyncDisposition.RETRY,
+                "オフラインです。接続が回復したら自動で同期します"
+            )
+        }
+        var last: CloudSyncExecutionResult? = null
+        for (attempt in 0 until maxAttempts.coerceAtLeast(1)) {
+            val result = executeSync(appContext, preferRemote)
+            last = result
+            Log.i(TAG, "sync attempt=${attempt + 1}/$maxAttempts reason=$reason disposition=${result.disposition}")
+            if (result.disposition != CloudSyncDisposition.RETRY) return result
+            if (attempt < maxAttempts - 1) delay(cloudSyncRetryDelayMillis(attempt))
+        }
+        // アプリ内の再試行を使い切った。回線回復や端末スリープ後に備え、WorkManagerへ引き継ぐ。
+        CloudFileSyncWorker.enqueueImmediate(appContext)
+        return last ?: CloudSyncExecutionResult(CloudSyncDisposition.RETRY, "同期できませんでした")
+    }
+
+    fun isNetworkAvailable(context: Context): Boolean = runCatching {
+        val manager = context.getSystemService(ConnectivityManager::class.java) ?: return true
+        val capabilities = manager.getNetworkCapabilities(manager.activeNetwork) ?: return false
+        capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+    }.getOrDefault(true)
 
     fun isConfigured(context: Context): Boolean =
         prefs(context).getString(KEY_SESSION, null).isNullOrBlank().not()
@@ -143,6 +301,9 @@ object CloudFileSyncManager {
                 CloudFileSyncWorker.schedule(appContext)
                 registerDatabaseObserver(appContext)
                 null
+            } catch (timeout: TimeoutCancellationException) {
+                candidate.close()
+                "MEGAへのログインがタイムアウトしました。通信状況を確認して再度お試しください"
             } catch (cancelled: CancellationException) {
                 candidate.close()
                 throw cancelled
@@ -191,17 +352,72 @@ object CloudFileSyncManager {
         CloudFileSyncWorker.enqueueImmediate(appContext)
     }
 
+    /** 手動同期。失敗しても自動で数回やり直し、最終結果の文言を返す。 */
     suspend fun syncNow(context: Context, preferRemote: Boolean = false): String =
-        executeSync(context.applicationContext, preferRemote).message
+        syncWithRetry(context.applicationContext, "manual", preferRemote).message
 
     internal suspend fun syncForBackground(context: Context): CloudSyncExecutionResult =
-        executeSync(context.applicationContext, preferRemote = false)
+        syncWithRetryInProcess(context.applicationContext)
+
+    // WorkManager 側にも独自のバックオフがあるため、ここでの再試行は短く留める。
+    private suspend fun syncWithRetryInProcess(context: Context): CloudSyncExecutionResult {
+        var last: CloudSyncExecutionResult? = null
+        for (attempt in 0 until CLOUD_SYNC_BACKGROUND_ATTEMPTS) {
+            val result = executeSync(context, preferRemote = false)
+            last = result
+            if (result.disposition != CloudSyncDisposition.RETRY) return result
+            if (attempt < CLOUD_SYNC_BACKGROUND_ATTEMPTS - 1) delay(cloudSyncRetryDelayMillis(attempt))
+        }
+        return last!!
+    }
 
     private suspend fun executeSync(
         context: Context,
         preferRemote: Boolean
     ): CloudSyncExecutionResult {
         val appContext = context.applicationContext
+        beginSyncState()
+        try {
+            val result = try {
+                executeSyncLocked(appContext, preferRemote)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                // 想定外の例外でプロセスごと落とさず、再試行可能な失敗として扱う。
+                failureResult(appContext, "同期中に予期しないエラーが発生しました", error)
+            }
+            if (result.recreateRuntime) {
+                // 通信断などで壊れたMEGAセッションを使い回さず、次回は復元からやり直す。
+                syncMutex.withLock { invalidateRuntime() }
+            }
+            return result
+        } finally {
+            endSyncState()
+        }
+    }
+
+    private fun beginSyncState() {
+        activeSyncCount.incrementAndGet()
+        _state.update { it.copy(isSyncing = true) }
+    }
+
+    private fun endSyncState() {
+        if (activeSyncCount.decrementAndGet() <= 0) {
+            activeSyncCount.set(0)
+            _state.update { it.copy(isSyncing = false) }
+        }
+    }
+
+    private fun invalidateRuntime() {
+        val active = runtime
+        runtime = null
+        runCatching { active?.close() }
+    }
+
+    private suspend fun executeSyncLocked(
+        appContext: Context,
+        preferRemote: Boolean
+    ): CloudSyncExecutionResult {
         return syncMutex.withLock {
             Log.i(TAG, "sync started preferRemote=$preferRemote")
             if (!isConfigured(appContext)) {
@@ -484,6 +700,10 @@ object CloudFileSyncManager {
                     }
                 }
             }.getOrElse { error ->
+                if (error is TimeoutCancellationException) {
+                    // CancellationException のまま投げると同期全体が「キャンセル」扱いになり再試行されない。
+                    throw java.io.IOException("MEGAへの接続がタイムアウトしました", error)
+                }
                 if ((error as? MegaOperationException)?.code == -15) {
                     throw CloudSyncPermanentException(
                         "MEGAセッションの有効期限が切れました。再ログインしてください",
@@ -563,21 +783,35 @@ object CloudFileSyncManager {
         } else {
             "$prefix: ${unwrapped.userMessage()}"
         }
-        return syncResult(context, disposition, message)
+        return syncResult(
+            context,
+            disposition,
+            message,
+            recreateRuntime = disposition == CloudSyncDisposition.RETRY
+        )
     }
 
     private fun syncResult(
         context: Context,
         disposition: CloudSyncDisposition,
-        message: String
+        message: String,
+        recreateRuntime: Boolean = false
     ): CloudSyncExecutionResult {
         setStatus(context, message)
+        if (disposition == CloudSyncDisposition.SUCCESS) {
+            val now = System.currentTimeMillis()
+            prefs(context).edit().putLong(KEY_LAST_SUCCESS_AT, now).apply()
+            lastSuccessElapsed.set(SystemClock.elapsedRealtime())
+            _state.update { it.copy(lastSuccessAt = now, message = message, lastFailed = false) }
+        } else {
+            _state.update { it.copy(message = message, lastFailed = true) }
+        }
         if (disposition == CloudSyncDisposition.SUCCESS) {
             Log.i(TAG, "sync completed disposition=$disposition message=$message")
         } else {
             Log.w(TAG, "sync completed disposition=$disposition message=$message")
         }
-        return CloudSyncExecutionResult(disposition, message)
+        return CloudSyncExecutionResult(disposition, message, recreateRuntime)
     }
 
     private fun setStatus(context: Context, value: String): String {
@@ -816,6 +1050,9 @@ private suspend inline fun <T> captureSyncFailure(
     crossinline block: suspend () -> T
 ): Result<T> = try {
     Result.success(block())
+} catch (timeout: TimeoutCancellationException) {
+    // withTimeout の期限切れは CancellationException の一種だが、同期の失敗として再試行対象にする。
+    Result.failure(timeout)
 } catch (cancelled: CancellationException) {
     throw cancelled
 } catch (error: Throwable) {
@@ -845,5 +1082,6 @@ private fun defaultReturn(type: Class<*>): Any? = when (type) {
 private fun Throwable?.userMessage(): String {
     if (this == null) return "不明なエラー"
     val target = unwrapReflectionException() ?: this
+    if (target is TimeoutCancellationException) return "通信がタイムアウトしました"
     return target.message?.takeIf { it.isNotBlank() } ?: target.javaClass.simpleName
 }
