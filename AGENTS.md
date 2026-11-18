@@ -29,6 +29,7 @@
 - `sync/`: ローカル同期、Nearby同期、競合判定。
 - `calendar/`: 端末カレンダーへの授業・課題・予定の反映。
 - `widget/`: Glanceウィジェットと更新処理。
+  - ウィジェットは Glance の Composable を使うが、描画は `DirectWidgetRenderer`（`GlanceRemoteViews` + `updateAppWidget`）がレシーバ内で直接行う。Glance標準の WorkManager/セッション経由の描画は、初期表示のまま止まる不具合があるため使わない。新しいウィジェットは `DirectGlanceWidget` / `DirectWidgetReceiver` を継承し、`ALL_WIDGET_KINDS` に登録すること。
 - `update/` と `ui/UpdateOverviewScreen.kt`: GitHubリリース確認、ダウンロード、インストール。
 - `ml/`: ローカルAI、OCR、モデルダウンロード。
 - `app/src/main/res/values/strings.xml`: ユーザー向け文字列の配置先。

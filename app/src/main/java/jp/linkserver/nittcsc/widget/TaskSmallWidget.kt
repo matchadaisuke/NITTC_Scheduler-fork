@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.glance.GlanceComposable
 import androidx.glance.GlanceId
 import androidx.glance.GlanceModifier
 import androidx.glance.GlanceTheme
@@ -32,20 +33,18 @@ import androidx.glance.text.TextAlign
 import androidx.glance.text.TextStyle
 import jp.linkserver.nittcsc.MainActivity
 
-class TaskSmallWidget : GlanceAppWidget() {
-    override suspend fun provideGlance(context: Context, id: GlanceId) {
-        // 読み込みに失敗しても例外でウィジェットごと「読み込めません」にせず、案内表示に切り替える。
-        val data = WidgetDataHelper.loadOrNull(context)
-        provideContent {
-            GlanceTheme {
-                if (data != null) Content(data) else WidgetLoadErrorContent()
-            }
+class TaskSmallWidget : DirectGlanceWidget() {
+    @Composable
+    @GlanceComposable
+    override fun Body(data: WidgetData?) {
+        GlanceTheme {
+            if (data != null) Content(data) else WidgetLoadErrorContent()
         }
     }
 }
 
-class TaskSmallWidgetReceiver : GlanceAppWidgetReceiver() {
-    override val glanceAppWidget = TaskSmallWidget()
+class TaskSmallWidgetReceiver : DirectWidgetReceiver() {
+    override val widget = TaskSmallWidget()
 }
 
 @Composable

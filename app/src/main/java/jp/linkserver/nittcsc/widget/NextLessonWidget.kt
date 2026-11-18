@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.glance.GlanceComposable
 import androidx.glance.GlanceId
 import androidx.glance.GlanceModifier
 import androidx.glance.GlanceTheme
@@ -37,20 +38,18 @@ import androidx.compose.ui.graphics.Color as ComposeColor
 
 private val WidgetPlanColor = ColorProvider(ComposeColor(0xFF2E86C1))
 
-class NextLessonWidget : GlanceAppWidget() {
-    override suspend fun provideGlance(context: Context, id: GlanceId) {
-        // 読み込みに失敗しても例外でウィジェットごと「読み込めません」にせず、案内表示に切り替える。
-        val data = WidgetDataHelper.loadOrNull(context)
-        provideContent {
-            GlanceTheme {
-                if (data != null) Content(data) else WidgetLoadErrorContent()
-            }
+class NextLessonWidget : DirectGlanceWidget() {
+    @Composable
+    @GlanceComposable
+    override fun Body(data: WidgetData?) {
+        GlanceTheme {
+            if (data != null) Content(data) else WidgetLoadErrorContent()
         }
     }
 }
 
-class NextLessonWidgetReceiver : GlanceAppWidgetReceiver() {
-    override val glanceAppWidget = NextLessonWidget()
+class NextLessonWidgetReceiver : DirectWidgetReceiver() {
+    override val widget = NextLessonWidget()
 }
 
 @Composable

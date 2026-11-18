@@ -5,6 +5,7 @@ import android.content.Intent
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.glance.GlanceComposable
 import androidx.glance.GlanceId
 import androidx.glance.GlanceModifier
 import androidx.glance.GlanceTheme
@@ -41,20 +42,18 @@ private val WidgetTaskDotColor = ColorProvider(ComposeColor(0xFFBA1A1A))
 private val WidgetPlanDotColor = ColorProvider(ComposeColor(0xFF2E86C1))
 private val WidgetCancelledTextColor = ColorProvider(ComposeColor(0xFF8A949B))
 
-class TimetableHugeWidget : GlanceAppWidget() {
-    override suspend fun provideGlance(context: Context, id: GlanceId) {
-        // 読み込みに失敗しても例外でウィジェットごと「読み込めません」にせず、案内表示に切り替える。
-        val data = WidgetDataHelper.loadOrNull(context)
-        provideContent {
-            GlanceTheme {
-                if (data != null) Content(data) else WidgetLoadErrorContent()
-            }
+class TimetableHugeWidget : DirectGlanceWidget() {
+    @Composable
+    @GlanceComposable
+    override fun Body(data: WidgetData?) {
+        GlanceTheme {
+            if (data != null) Content(data) else WidgetLoadErrorContent()
         }
     }
 }
 
-class TimetableHugeWidgetReceiver : GlanceAppWidgetReceiver() {
-    override val glanceAppWidget = TimetableHugeWidget()
+class TimetableHugeWidgetReceiver : DirectWidgetReceiver() {
+    override val widget = TimetableHugeWidget()
 }
 
 @Composable

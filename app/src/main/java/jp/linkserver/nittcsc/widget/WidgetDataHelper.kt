@@ -58,6 +58,7 @@ data class NextLessonWidgetEntry(
 
 object WidgetDataHelper {
     private const val TAG = "WidgetData"
+    private const val LOAD_TIMEOUT_MS = 8_000L
 
     /** 直近の読み込み失敗の概要（ウィジェット上の案内表示に使う）。成功すると null に戻る。 */
     @Volatile
@@ -65,7 +66,15 @@ object WidgetDataHelper {
 
     /** 失敗時は握りつぶさずログへ残し、null を返す（キャンセルは再送出）。 */
     suspend fun loadOrNull(context: Context): WidgetData? = try {
-        load(context).also { lastLoadError = null }
+        // 読み込みが固まると「読み込み中」のまま永遠に変わらないため、上限を設けて案内表示へ切り替える。
+        val loaded = kotlinx.coroutines.withTimeoutOrNull(LOAD_TIMEOUT_MS) { load(context) }
+        if (loaded == null) {
+            android.util.Log.e(TAG, "Widget data load timed out after ${LOAD_TIMEOUT_MS}ms")
+            lastLoadError = "Timeout"
+        } else {
+            lastLoadError = null
+        }
+        loaded
     } catch (cancelled: kotlinx.coroutines.CancellationException) {
         throw cancelled
     } catch (error: Throwable) {
