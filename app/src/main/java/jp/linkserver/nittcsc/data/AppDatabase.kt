@@ -25,7 +25,7 @@ import androidx.room.TypeConverters
         SyncRegisteredDeviceEntity::class,
         SyncTrustedPeerEntity::class
     ],
-    version = 50,
+    version = 54,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
@@ -581,6 +581,16 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL(
                     "ALTER TABLE settings ADD COLUMN enableSemesterTimetables INTEGER NOT NULL DEFAULT 1"
                 )
+                db.execSQL("ALTER TABLE settings ADD COLUMN pendingLegacyTimetableYear INTEGER")
+                db.execSQL(
+                    """
+                    UPDATE settings SET pendingLegacyTimetableYear =
+                        CASE WHEN CAST(substr(termStart, 6, 2) AS INTEGER) >= 4
+                            THEN CAST(substr(termStart, 1, 4) AS INTEGER)
+                            ELSE CAST(substr(termStart, 1, 4) AS INTEGER) - 1
+                        END
+                    """.trimIndent()
+                )
                 db.execSQL(
                     """
                     CREATE TABLE IF NOT EXISTS lessons_new (
@@ -705,9 +715,85 @@ abstract class AppDatabase : RoomDatabase() {
 
         val MIGRATION_49_50 = object : androidx.room.migration.Migration(49, 50) {
             override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
-                db.execSQL("ALTER TABLE settings ADD COLUMN enableSaturdayClasses INTEGER NOT NULL DEFAULT 0")
-                db.execSQL("ALTER TABLE settings ADD COLUMN schedulePresetsJson TEXT NOT NULL DEFAULT ''")
-                db.execSQL("ALTER TABLE settings ADD COLUMN lessonNotificationConfigJson TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE settings ADD COLUMN secondTermStartMonth INTEGER NOT NULL DEFAULT 10")
+                db.execSQL("ALTER TABLE settings ADD COLUMN secondTermStartDay INTEGER NOT NULL DEFAULT 1")
+                db.execSQL("ALTER TABLE sync_registered_devices ADD COLUMN lastLessonPartitionsSyncAt TEXT NOT NULL DEFAULT '{}'")
+                // Existing lesson timestamps are copied to each partition. Peer baselines start empty
+                // so the first sync after the protocol change checks every differing partition.
+                db.execSQL(
+                    """
+                    INSERT OR IGNORE INTO sync_dataset_meta(datasetKey, lastUpdatedAt, lastUpdatedByDeviceId)
+                    SELECT 'lessons/' || academicYear || '/' || timetableTerm,
+                           COALESCE((SELECT lastUpdatedAt FROM sync_dataset_meta WHERE datasetKey = 'lessons'), 0),
+                           COALESCE((SELECT lastUpdatedByDeviceId FROM sync_dataset_meta WHERE datasetKey = 'lessons'), '')
+                    FROM lessons GROUP BY academicYear, timetableTerm
+                    """.trimIndent()
+                )
+            }
+        }
+
+        val MIGRATION_50_51 = object : androidx.room.migration.Migration(50, 51) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                if (!hasColumn(db, "settings", "pendingLegacyTimetableYear")) {
+                    db.execSQL("ALTER TABLE settings ADD COLUMN pendingLegacyTimetableYear INTEGER")
+                }
+            }
+        }
+
+        val MIGRATION_51_52 = object : androidx.room.migration.Migration(51, 52) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE settings ADD COLUMN showSyncButton INTEGER NOT NULL DEFAULT 0")
+                // 未設定のプロフィールも自動作成されるため、初期設定済みの方だけ表示する。
+                db.execSQL(
+                    """
+                    UPDATE settings SET showSyncButton = 1
+                    WHERE EXISTS (
+                        SELECT 1 FROM sync_profile
+                        WHERE id = 1 AND TRIM(userNickname) <> '' AND passwordLength > 0
+                    )
+                    """.trimIndent()
+                )
+            }
+        }
+
+        val MIGRATION_52_53 = object : androidx.room.migration.Migration(52, 53) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE settings ADD COLUMN arrivalTimeAuto INTEGER NOT NULL DEFAULT 1")
+                db.execSQL("UPDATE settings SET arrivalTimeAuto = 0 WHERE arrivalHour BETWEEN 0 AND 23 AND arrivalMinute BETWEEN 0 AND 59 AND NOT (arrivalHour = 8 AND arrivalMinute = 30)")
+            }
+        }
+
+        /**
+         * フォークと本家で、同じ 49→50 の番号に別の変更が入っていた（スキーマ分岐）ため、
+         * どちらの経路を通った端末でも同じスキーマへ揃える。列の有無を見て不足分だけ追加するので、
+         * フォーク版 v50 の端末・本家版 v50〜v53 の端末のどちらからでも安全に実行できる。
+         */
+        val MIGRATION_53_54 = object : androidx.room.migration.Migration(53, 54) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                fun addIfMissing(table: String, column: String, definition: String) {
+                    if (!hasColumn(db, table, column)) {
+                        db.execSQL("ALTER TABLE $table ADD COLUMN $column $definition")
+                    }
+                }
+                // フォーク由来の列（旧フォーク版の 49→50）
+                addIfMissing("settings", "enableSaturdayClasses", "INTEGER NOT NULL DEFAULT 0")
+                addIfMissing("settings", "schedulePresetsJson", "TEXT NOT NULL DEFAULT ''")
+                addIfMissing("settings", "lessonNotificationConfigJson", "TEXT NOT NULL DEFAULT ''")
+                // 本家由来の列（本家の 49→50）。旧フォーク版 v50 の端末は通っていない。
+                addIfMissing("settings", "secondTermStartMonth", "INTEGER NOT NULL DEFAULT 10")
+                addIfMissing("settings", "secondTermStartDay", "INTEGER NOT NULL DEFAULT 1")
+                if (!hasColumn(db, "sync_registered_devices", "lastLessonPartitionsSyncAt")) {
+                    db.execSQL("ALTER TABLE sync_registered_devices ADD COLUMN lastLessonPartitionsSyncAt TEXT NOT NULL DEFAULT '{}'")
+                    db.execSQL(
+                        """
+                        INSERT OR IGNORE INTO sync_dataset_meta(datasetKey, lastUpdatedAt, lastUpdatedByDeviceId)
+                        SELECT 'lessons/' || academicYear || '/' || timetableTerm,
+                               COALESCE((SELECT lastUpdatedAt FROM sync_dataset_meta WHERE datasetKey = 'lessons'), 0),
+                               COALESCE((SELECT lastUpdatedByDeviceId FROM sync_dataset_meta WHERE datasetKey = 'lessons'), '')
+                        FROM lessons GROUP BY academicYear, timetableTerm
+                        """.trimIndent()
+                    )
+                }
             }
         }
 
@@ -719,8 +805,7 @@ abstract class AppDatabase : RoomDatabase() {
                     "nittc_scheduler.db"
                 )
                 .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33, MIGRATION_33_34, MIGRATION_34_35, MIGRATION_35_36, MIGRATION_36_37, MIGRATION_37_38, MIGRATION_38_39, MIGRATION_39_40, MIGRATION_40_41, MIGRATION_41_42, MIGRATION_42_43, MIGRATION_43_44, MIGRATION_44_45, MIGRATION_45_46, MIGRATION_46_47, MIGRATION_47_48)
-                .addMigrations(MIGRATION_48_49)
-                .addMigrations(MIGRATION_49_50)
+                .addMigrations(MIGRATION_48_49, MIGRATION_49_50, MIGRATION_50_51, MIGRATION_51_52, MIGRATION_52_53, MIGRATION_53_54)
                  .build().also { INSTANCE = it }
             }
         }

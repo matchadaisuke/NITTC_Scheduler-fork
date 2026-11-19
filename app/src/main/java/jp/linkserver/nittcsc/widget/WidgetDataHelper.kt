@@ -8,7 +8,6 @@ import jp.linkserver.nittcsc.data.DayTypeEntity
 import jp.linkserver.nittcsc.data.ExamDayScheduleEntity
 import jp.linkserver.nittcsc.data.ExamLessonEntity
 import jp.linkserver.nittcsc.data.hasEnteredContent
-import jp.linkserver.nittcsc.data.HolidaySpecialLabel
 import jp.linkserver.nittcsc.data.LessonEntity
 import jp.linkserver.nittcsc.data.LessonMode
 import jp.linkserver.nittcsc.data.lessonKey
@@ -142,7 +141,9 @@ object WidgetDataHelper {
         dayTypeEntities: Map<LocalDate, DayTypeEntity>,
         dayTypeMap: Map<LocalDate, DayType>,
         changedLessons: Map<Pair<LocalDate, Int>, ChangedLessonEntity> = emptyMap(),
-        semesterTimetablesEnabled: Boolean = false
+        semesterTimetablesEnabled: Boolean = false,
+        secondTermStartMonth: Int = 10,
+        secondTermStartDay: Int = 1
     ): ResolvedLesson? {
         if (date.dayOfWeek == DayOfWeek.SUNDAY) return null
         val dayTypeEntity = dayTypeEntities[date]
@@ -151,7 +152,9 @@ object WidgetDataHelper {
 
         val lessonDayOfWeek = dayTypeEntity?.overrideLessonDayOfWeek ?: date.dayOfWeek.value
         val lessonDayType = dayTypeEntity?.overrideLessonDayType ?: dayType
-        val timetableTerm = timetableTermForDate(date, semesterTimetablesEnabled)
+        val timetableTerm = timetableTermForDate(
+            date, semesterTimetablesEnabled, secondTermStartMonth, secondTermStartDay
+        )
         val lesson = lessons[
             LessonKey(
                 academicYear = academicYearForDate(date),
@@ -226,7 +229,9 @@ object WidgetDataHelper {
             dayTypeEntities = data.dayTypeEntities,
             dayTypeMap = data.dayTypeMap,
             changedLessons = data.changedLessons,
-            semesterTimetablesEnabled = data.settings?.enableSemesterTimetables == true
+            semesterTimetablesEnabled = data.settings?.enableSemesterTimetables == true,
+            secondTermStartMonth = data.settings?.secondTermStartMonth ?: 10,
+            secondTermStartDay = data.settings?.secondTermStartDay ?: 1
         )
     }
 
@@ -234,7 +239,7 @@ object WidgetDataHelper {
         val label = data.dayTypeEntities[date]?.holidaySpecialLabel
         return data.settings?.enableExamTimetable != false && date in data.examDaySchedules &&
             data.examLessons.values.any { it.date == date && it.hasEnteredContent() } &&
-            (label == HolidaySpecialLabel.MIDTERM || label == HolidaySpecialLabel.FINAL)
+            label?.usesExamTimetable == true
     }
 
     /** 今日から先で最も近い授業を返す（授業中ならその授業を含む） */

@@ -125,4 +125,41 @@ class CustomizationModelsTest {
             rendered
         )
     }
+
+    @Test
+    fun arrivalAndDepartureSettingsRoundTrip() {
+        val base = LessonNotificationCustomization.defaults()
+        val config = base.copy(
+            arrivalTriggers = listOf(LessonNotificationTrigger(true, 45), LessonNotificationTrigger(true, 5)),
+            departureTriggers = listOf(LessonNotificationTrigger(true, 15), LessonNotificationTrigger(false, 0)),
+            arrivalTitleTemplate = "登校 {minutes}",
+            departureBodyTemplate = "下校 {time}"
+        )
+        val decoded = decodeLessonNotificationCustomization(encodeLessonNotificationCustomization(config))
+        assertEquals(config.arrivalTriggers, decoded.arrivalTriggers)
+        assertEquals(config.departureTriggers, decoded.departureTriggers)
+        assertEquals("登校 {minutes}", decoded.arrivalTitleTemplate)
+        assertEquals("下校 {time}", decoded.departureBodyTemplate)
+    }
+
+    @Test
+    fun legacyJsonWithoutTripKeysFallsBackToDefaults() {
+        val legacy = """{"startTriggers":[{"enabled":true,"minutesBefore":7},{"enabled":false,"minutesBefore":5}]}"""
+        val decoded = decodeLessonNotificationCustomization(legacy)
+        assertEquals(7, decoded.startTriggers.first().minutesBefore)
+        assertEquals(DEFAULT_ARRIVAL_TRIGGERS, decoded.arrivalTriggers)
+        assertEquals(DEFAULT_DEPARTURE_TITLE_TEMPLATE, decoded.departureTitleTemplate)
+    }
+
+    @Test
+    fun schoolTripTemplateReplacesAllVariables() {
+        val text = renderSchoolTripTemplate(
+            "{time}の{minutes}分前 {first_period}{first_subject}@{first_location} {first_start_time} 全{lesson_count}コマ 明日:{tomorrow_first_subject}",
+            SchoolTripTemplateValues(
+                minutes = 10, time = "08:40", firstSubject = "数学", firstLocation = "101",
+                firstPeriod = "1限", firstStartTime = "09:05", lessonCount = 4, tomorrowFirstSubject = "英語"
+            )
+        )
+        assertEquals("08:40の10分前 1限数学@101 09:05 全4コマ 明日:英語", text)
+    }
 }

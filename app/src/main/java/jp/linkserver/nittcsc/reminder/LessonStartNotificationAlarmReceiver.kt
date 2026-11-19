@@ -1,13 +1,9 @@
 package jp.linkserver.nittcsc.reminder
 
+import jp.linkserver.nittcsc.sync.CloudFileSyncManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import jp.linkserver.nittcsc.sync.CloudFileSyncManager
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.launch
 import java.time.LocalDate
 
 class LessonStartNotificationAlarmReceiver : BroadcastReceiver() {
@@ -18,31 +14,11 @@ class LessonStartNotificationAlarmReceiver : BroadcastReceiver() {
         val slotIndex = intent.getIntExtra(EXTRA_SLOT_INDEX, -1)
         if (slotIndex < 0) return
 
-        val pendingResult = goAsync()
-        val appContext = context.applicationContext
-        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
-            try {
-                // AlarmManager is the time-critical path. Post once from the receiver so
-                // expedited-work quota or JobScheduler latency cannot make the reminder
-                // miss the worker's late-delivery window. The worker remains responsible
-                // for Live Updates and acts as a second delivery attempt.
-                // 通知は待たせず、同期は同時に走らせる。
-                CloudFileSyncManager.syncAlongsideNotification(appContext, "lesson_alarm")
-                LessonStartNotificationWorker.deliverAlarmNotification(
-                    appContext,
-                    date,
-                    slotIndex
-                )
-            } catch (error: Throwable) {
-                ReminderDebug.warn(
-                    "lesson alarm direct delivery failed date=$date slotIndex=$slotIndex",
-                    error
-                )
-            } finally {
-                LessonStartNotificationWorker.enqueueNow(appContext, date, slotIndex)
-                pendingResult.finish()
-            }
-        }
+        // 通知は待たせず、同期は同時に走らせる。
+        CloudFileSyncManager.syncAlongsideNotification(context, "lesson_alarm")
+        LessonStartNotificationWorker.enqueueNow(context.applicationContext, date, slotIndex,
+            intent.getBooleanExtra(LessonStartNotificationWorker.KEY_LIVE, false),
+            intent.getStringExtra(LessonStartNotificationWorker.KEY_SIGNATURE))
     }
 
     companion object {

@@ -8,12 +8,10 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -43,6 +41,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -50,7 +51,6 @@ import jp.linkserver.nittcsc.R
 import jp.linkserver.nittcsc.data.PlanEntity
 import jp.linkserver.nittcsc.data.TaskEntity
 import jp.linkserver.nittcsc.ui.components.AppButtonGroup
-import jp.linkserver.nittcsc.update.AppUpdateInfo
 import jp.linkserver.nittcsc.viewmodel.SchedulerUiState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -108,123 +108,6 @@ internal fun TaskEntity.toPlanEntityLike(existing: PlanEntity? = null): PlanEnti
     reminderCalendarEventId = existing?.reminderCalendarEventId ?: reminderCalendarEventId
 )
 
-
-@Composable
-internal fun UpdateNotificationBanner(
-    updateInfo: AppUpdateInfo,
-    onOpen: () -> Unit,
-    onDismiss: () -> Unit
-) {
-    val scope = rememberCoroutineScope()
-    val density = LocalDensity.current
-    val dismissThresholdPx = with(density) { 56.dp.toPx() }
-    val dismissTargetPx = with(density) { 180.dp.toPx() }
-    var dragOffsetY by remember(updateInfo.tagName) { mutableFloatStateOf(0f) }
-    var dismissing by remember(updateInfo.tagName) { mutableStateOf(false) }
-    var settleJob by remember(updateInfo.tagName) { mutableStateOf<Job?>(null) }
-
-    fun settleBanner(dismiss: Boolean) {
-        if (dismissing) return
-        settleJob?.cancel()
-        settleJob = scope.launch {
-            if (dismiss) {
-                dismissing = true
-                val animation = Animatable(dragOffsetY)
-                animation.animateTo(
-                    targetValue = -dismissTargetPx,
-                    animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing)
-                ) {
-                    dragOffsetY = value
-                }
-                onDismiss()
-            } else {
-                val animation = Animatable(dragOffsetY)
-                animation.animateTo(
-                    targetValue = 0f,
-                    animationSpec = spring()
-                ) {
-                    dragOffsetY = value
-                }
-            }
-        }
-    }
-
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .graphicsLayer {
-                translationY = dragOffsetY
-                alpha = (1f - (-dragOffsetY / dismissTargetPx) * 0.45f).coerceIn(0.55f, 1f)
-            }
-            .pointerInput(updateInfo.tagName) {
-                detectVerticalDragGestures(
-                    onDragStart = {
-                        if (!dismissing) settleJob?.cancel()
-                    },
-                    onVerticalDrag = { change, dragAmount ->
-                        if (!dismissing) {
-                            change.consume()
-                            dragOffsetY = (dragOffsetY + dragAmount).coerceAtMost(0f)
-                        }
-                    },
-                    onDragEnd = {
-                        settleBanner(dragOffsetY <= -dismissThresholdPx)
-                    },
-                    onDragCancel = {
-                        settleBanner(dismiss = false)
-                    }
-                )
-            }
-            .clickable(onClick = onOpen),
-        shape = RoundedCornerShape(20.dp),
-        tonalElevation = 8.dp,
-        shadowElevation = 10.dp,
-        color = MaterialTheme.colorScheme.primaryContainer
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(start = 18.dp, end = 10.dp, top = 14.dp, bottom = 14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(2.dp)
-            ) {
-                Text(
-                    text = stringResource(R.string.update_banner_title),
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer
-                )
-                Text(
-                    text = stringResource(R.string.update_banner_body, updateInfo.tagName),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.88f),
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-            Surface(
-                modifier = Modifier.clickable(onClick = onDismiss),
-                shape = CircleShape,
-                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.10f)
-            ) {
-                Box(
-                    modifier = Modifier.padding(8.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Close,
-                        contentDescription = stringResource(R.string.update_banner_dismiss),
-                        tint = MaterialTheme.colorScheme.onPrimaryContainer
-                    )
-                }
-            }
-        }
-    }
-}
 
 @Composable
 internal fun NaturalLanguageTaskAddDialog(

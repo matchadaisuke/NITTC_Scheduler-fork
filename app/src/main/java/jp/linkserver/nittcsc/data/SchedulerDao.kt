@@ -37,6 +37,9 @@ interface SchedulerDao {
     @Query("DELETE FROM day_types")
     suspend fun deleteAllDayTypes()
 
+    @Query("DELETE FROM day_types WHERE date >= :startDate AND date <= :endDate")
+    suspend fun deleteDayTypesInRange(startDate: LocalDate, endDate: LocalDate)
+
     @Query("DELETE FROM day_types WHERE date < :startDate OR date > :endDate")
     suspend fun deleteDayTypesOutsideRange(startDate: LocalDate, endDate: LocalDate)
 
@@ -185,6 +188,15 @@ interface SchedulerDao {
 
     @Query("DELETE FROM lessons")
     suspend fun deleteAllLessons()
+
+    @Query("DELETE FROM lessons WHERE academicYear = :academicYear AND timetableTerm = :timetableTerm")
+    suspend fun deleteLessonsForPartition(
+        academicYear: Int,
+        timetableTerm: jp.linkserver.nittcsc.logic.TimetableTerm
+    )
+
+    @Query("UPDATE lessons SET timetableTerm = 'SECOND' WHERE academicYear = :academicYear AND timetableTerm = 'FIRST'")
+    suspend fun moveFirstTermLessonsToSecond(academicYear: Int)
 
     @Query("SELECT * FROM tasks ORDER BY dueDate, dueHour, dueMinute, priority DESC")
     fun observeTasks(): Flow<List<TaskEntity>>

@@ -452,7 +452,7 @@ object CloudFileSyncManager {
             } else {
                 null
             }
-            val remote = remoteText?.let(::parseCloudRemote)
+            val remote = remoteText?.let(::parseCloudRemote)?.withoutIncompatibleSyncPayload()
             if (!remoteText.isNullOrBlank() && remote == null) {
                 return@withLock syncResult(
                     appContext,

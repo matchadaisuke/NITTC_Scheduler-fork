@@ -22,9 +22,22 @@ fun NotificationManagerCompat.notifyIfAllowed(
     notificationId: Int,
     notification: Notification
 ): Boolean {
-    val allowed = context.canPostAppNotifications()
-    if (allowed) {
-        notify(notificationId, notification)
+    if (context.canPostAppNotifications()) {
+        try {
+            notify(notificationId, notification)
+            return true
+        } catch (_: SecurityException) { /* 権限変更との競合 */ }
     }
-    return allowed
+    return false
+}
+
+@SuppressLint("MissingPermission")
+fun NotificationManagerCompat.notifyIfAllowed(context: Context, tag: String, id: Int, notification: Notification): Boolean {
+    if (context.canPostAppNotifications()) {
+        try {
+            notify(tag, id, notification)
+            return true
+        } catch (_: SecurityException) { /* 権限変更との競合 */ }
+    }
+    return false
 }

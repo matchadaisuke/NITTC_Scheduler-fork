@@ -4,7 +4,6 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
-import android.app.AlarmManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
@@ -24,40 +23,24 @@ import androidx.work.WorkerParameters
 import jp.linkserver.nittcsc.MainActivity
 import jp.linkserver.nittcsc.R
 import jp.linkserver.nittcsc.data.AppDatabase
-import jp.linkserver.nittcsc.data.ChangedLessonEntity
-import jp.linkserver.nittcsc.data.DayType
-import jp.linkserver.nittcsc.data.DayTypeEntity
-import jp.linkserver.nittcsc.data.ExamLessonEntity
-import jp.linkserver.nittcsc.data.hasEnteredContent
-import jp.linkserver.nittcsc.data.HolidaySpecialLabel
-import jp.linkserver.nittcsc.data.LessonEntity
-import jp.linkserver.nittcsc.data.LessonMode
-import jp.linkserver.nittcsc.data.lessonKey
+import jp.linkserver.nittcsc.data.EffectiveSchoolSchedule
 import jp.linkserver.nittcsc.data.LessonStartNotificationChipMode
 import jp.linkserver.nittcsc.data.LessonNotificationExclusionEntity
+import jp.linkserver.nittcsc.data.ResolvedLesson
 import jp.linkserver.nittcsc.data.LessonNotificationCustomization
 import jp.linkserver.nittcsc.data.LessonNotificationTemplateValues
+import jp.linkserver.nittcsc.data.SettingsEntity
 import jp.linkserver.nittcsc.data.lessonNotificationCustomization
 import jp.linkserver.nittcsc.data.renderLessonNotificationTemplate
-import jp.linkserver.nittcsc.data.ResolvedLesson
-import jp.linkserver.nittcsc.data.SettingsEntity
-import jp.linkserver.nittcsc.logic.ClassSlot
-import jp.linkserver.nittcsc.logic.forTimetable
-import jp.linkserver.nittcsc.logic.JapaneseHolidayCalculator
-import jp.linkserver.nittcsc.logic.LessonKey
-import jp.linkserver.nittcsc.logic.PeriodLabelStyle
-import jp.linkserver.nittcsc.logic.academicYearForDate
-import jp.linkserver.nittcsc.logic.applyChangedLesson
-import jp.linkserver.nittcsc.logic.formatExamPeriodLabel
-import jp.linkserver.nittcsc.logic.generateClassSlots
-import jp.linkserver.nittcsc.logic.timetableTermForDate
 import jp.linkserver.nittcsc.sync.CloudFileSyncManager
+import jp.linkserver.nittcsc.logic.ClassSlot
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import java.time.DayOfWeek
 import java.time.Duration
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -71,167 +54,90 @@ class LessonStartNotificationWorker(
 ) : CoroutineWorker(appContext, params) {
 
     private var customConfig: LessonNotificationCustomization? = null
-    private var nextLessonForTemplate: NextLessonSnapshot? = null
-    private var cloudSyncRequestedForNotification = false
+    private var nextLessonForTemplate: NextLessonForTemplate? = null
 
     override suspend fun doWork(): Result {
         val date = runCatching { LocalDate.parse(inputData.getString(KEY_DATE).orEmpty()) }
             .getOrNull()
-            ?: return Result.success().also {
-                ReminderDebug.log("lesson worker skipped reason=invalid_date")
-            }
+            ?: return Result.success()
         val slotIndex = inputData.getInt(KEY_SLOT_INDEX, -1)
-        if (slotIndex < 0) return Result.success().also {
-            ReminderDebug.log("lesson worker skipped date=$date reason=invalid_slot")
-        }
+        if (slotIndex < 0) return Result.success()
 
-        ReminderDebug.log("lesson worker started date=$date slotIndex=$slotIndex")
-
-        // 通知は待たせず、同期は同時に走らせる。
-        CloudFileSyncManager.syncAlongsideNotification(applicationContext, "lesson_worker")
-
-        val dao = AppDatabase.getInstance(applicationContext).schedulerDao()
-        val settings = dao.getSettings() ?: return Result.success()
+        if (!applicationContext.canPostAppNotifications()) return Result.success()
+        val schedule = EffectiveSchoolSchedule.load(AppDatabase.getInstance(applicationContext).schedulerDao())
+            ?: return Result.success()
+        val settings = schedule.settings
         if (!settings.lessonStartNotificationEnabled) return Result.success()
+        // フォーク独自: 通知内容のカスタマイズ（開始前トリガーが無効なら通知しない）。
         customConfig = settings.lessonNotificationCustomization()
         if (customConfig?.startTriggers?.firstOrNull()?.enabled != true) return Result.success()
-
-        val specialLabel = dao.getDayType(date)?.holidaySpecialLabel
-        val examLessonsForDate = dao.getExamLessonsForDate(date)
-        val isExamDate = settings.enableExamTimetable && dao.getExamDaySchedule(date) != null &&
-            examLessonsForDate.any { it.hasEnteredContent() } &&
-            (specialLabel == HolidaySpecialLabel.MIDTERM || specialLabel == HolidaySpecialLabel.FINAL)
-        val examLesson = if (isExamDate) {
-            examLessonsForDate.firstOrNull { it.slotIndex == slotIndex }
-        } else {
-            null
-        }
-        val slot = if (isExamDate) {
-            examLesson?.toClassSlot(settings.periodLabelStyle) ?: return Result.success()
-        } else {
-            settings.classSlots().firstOrNull { it.index == slotIndex } ?: return Result.success()
-        }
-        if (!isExamDate && dao.getCancelledLesson(date, slotIndex) != null) return Result.success()
-
-        val lesson = if (isExamDate) {
-            examLesson?.toResolvedLesson()
-        } else {
-            resolveEffectiveLesson(
-                date = date,
-                slotIndex = slotIndex,
-                dayTypeEntities = dao.getDayTypesOnce().associateBy { it.date },
-                lessons = dao.getLessonsOnce().map { it.forTimetable(settings.enableAbTimetable) }.associateBy { it.lessonKey() },
-                changedLessons = dao.getChangedLessonsOnce().associateBy { it.date to it.slotIndex },
-                semesterTimetablesEnabled = settings.enableSemesterTimetables
-            )
-        } ?: return Result.success()
-        if (lesson.subject.isBlank()) return Result.success()
-        if (isExcluded(lesson, dao.getLessonNotificationExclusionsOnce())) return Result.success()
-        nextLessonForTemplate = AdditionalLessonNotificationWorker.findNextLesson(applicationContext, date, slotIndex)
-
+        // 通知は待たせず、同期は同時に走らせる。
+        CloudFileSyncManager.syncAlongsideNotification(applicationContext, "lesson_worker")
+        val candidate = schedule.lessonsOn(date).firstOrNull { it.slotIndex == slotIndex } ?: return Result.success()
+        nextLessonForTemplate = schedule.lessonsOn(date)
+            .filter { it.slotIndex > slotIndex }
+            .minByOrNull { it.slotIndex }
+            ?.let { NextLessonForTemplate(it.content.subject, it.content.teacher, it.content.location.orEmpty(), it.slotLabel, it.start) }
+        val exclusions = AppDatabase.getInstance(applicationContext).schedulerDao().getLessonNotificationExclusionsOnce()
+        val lesson = candidate.content
+        if (isExcluded(lesson, exclusions)) return Result.success()
+        val live = inputData.getBoolean(KEY_LIVE, false)
+        val signature = signature(candidate, settings, live)
+        if (inputData.getString(KEY_SIGNATURE) != signature) return Result.success()
+        val slot = ClassSlot(candidate.slotIndex, candidate.slotLabel, candidate.start, candidate.end)
+        val actualLessonStart = candidate.startsAt
+        val minutesBefore = settings.effectiveStartMinutes().coerceIn(0, 360)
+        val scheduledAt = notificationAt(candidate, settings, live)
+        val now = LocalDateTime.now()
+        if (now.isBefore(scheduledAt) || now.isAfter(actualLessonStart.plusMinutes(1))) return Result.success()
         createNotificationChannel()
+        val notificationId = notificationId(date, slotIndex, live)
+        val pendingIntent = PendingIntent.getActivity(applicationContext, notificationId,
+            Intent(applicationContext, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            }, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
 
-        val notificationId = notificationId(date, slotIndex)
-        val openAppIntent = Intent(applicationContext, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-        }
-        val pendingIntent = PendingIntent.getActivity(
-            applicationContext,
-            notificationId,
-            openAppIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        val minutesBefore = settings.lessonStartNotificationMinutesBefore.coerceIn(0, 360)
-        val actualLessonStart = LocalDateTime.of(date, slot.start)
-        val liveUpdatesActive =
-            settings.lessonStartNotificationLiveUpdatesEnabled &&
-            Build.VERSION.SDK_INT >= 36 &&
-            minutesBefore > 0 &&
-            canPostPromotedNotifications()
-        val liveUpdateEarlyMinutes = settings.lessonStartNotificationLiveUpdateEarlyMinutes.coerceIn(0, 5)
-
-        if (liveUpdatesActive) {
-            val liveUpdateTarget = actualLessonStart.minusMinutes(liveUpdateEarlyMinutes.toLong())
-            val remainingMillis = Duration.between(
-                LocalDateTime.now(ZoneId.systemDefault()),
-                liveUpdateTarget
-            ).toMillis()
-            if (remainingMillis >= -LATE_NOTIFICATION_GRACE_MS) {
-                showLiveUpdateCountdown(
-                    notificationId = notificationId,
-                    lesson = lesson,
-                    slot = slot,
-                    liveUpdateTarget = liveUpdateTarget,
-                    minutesBefore = minutesBefore,
-                    progressCountsDown = settings.lessonStartNotificationProgressCountsDown,
-                    chipMode = settings.lessonStartNotificationChipMode,
-                    pendingIntent = pendingIntent
-                )
-            } else {
-                showLateStandardNotification(
-                    notificationId = notificationId,
-                    lesson = lesson,
-                    slot = slot,
-                    actualLessonStart = actualLessonStart,
-                    configuredMinutesBefore = minutesBefore,
-                    pendingIntent = pendingIntent
-                )
+        val timing = jp.linkserver.nittcsc.logic.lessonReminderTiming(actualLessonStart, minutesBefore,
+            settings.lessonStartNotificationLiveUpdatesEnabled, Build.VERSION.SDK_INT >= 36,
+            settings.lessonStartNotificationLiveUpdateEarlyMinutes)
+        val liveAvailable = timing.liveAt != null && canPostPromotedNotifications()
+        val standardSignature = signature(candidate, settings, false)
+        val coordinator = LessonNotificationDeliveryCoordinator(applicationContext, "$date|$slotIndex",
+            timing.standardAt.toString(), signature(candidate, settings, true), notificationId(date, slotIndex, true), deliveryGate)
+        if (live) {
+            val target = timing.liveEndsAt ?: return Result.success()
+            if (!liveAvailable || !now.isBefore(target)) return Result.success()
+            var completed = false
+            try {
+                completed = showLiveUpdateCountdown(notificationId, lesson, slot, target, minutesBefore,
+                    settings.lessonStartNotificationProgressCountsDown, settings.lessonStartNotificationChipMode,
+                    pendingIntent, coordinator)
+            } finally {
+                // WorkManagerの停止・Foreground化失敗でも、成功記録を残して通常通知を失わない。
+                withContext(NonCancellable) {
+                    if (coordinator.finishLive(id.toString(), completed)) {
+                        deliveryGate.exclusively {
+                            enqueueRecovery(applicationContext, date, slotIndex, standardSignature, timing.standardAt)
+                        }
+                    }
+                }
             }
         } else {
-            val standardNotificationAt = actualLessonStart.minusMinutes(minutesBefore.toLong())
-            val waitMillis = Duration.between(
-                LocalDateTime.now(ZoneId.systemDefault()),
-                standardNotificationAt
-            ).toMillis()
-            if (waitMillis > 0L) delay(waitMillis)
-
-            val remainingMillis = Duration.between(
-                LocalDateTime.now(ZoneId.systemDefault()),
-                actualLessonStart
-            ).toMillis()
-            if (remainingMillis < -LATE_NOTIFICATION_GRACE_MS) {
-                ReminderDebug.log(
-                    "lesson worker skipped date=$date slotIndex=$slotIndex " +
-                        "reason=past_grace remainingMillis=$remainingMillis"
-                )
-                return Result.success()
-            }
-            val displayMinutesBefore = displayMinutesBefore(
-                configuredMinutesBefore = minutesBefore,
-                remainingMillis = remainingMillis
-            )
-            notifySafely(
-                notificationId,
-                buildStandardNotification(displayMinutesBefore, lesson, slot, pendingIntent)
-            )
+            coordinator.deliverStandard(liveAvailable, Duration.between(timing.standardAt, now).toMillis(),
+                beforeDecision = { clearRecoveryCheck(applicationContext, date, slotIndex, standardSignature, inputData.getLong(KEY_RECOVERY_AT, 0)) },
+                scheduleRecovery = { enqueueRecovery(applicationContext, date, slotIndex, standardSignature, LocalDateTime.now().plusSeconds(30)) },
+                cancelLiveWork = {
+                    val manager = WorkManager.getInstance(applicationContext)
+                    manager.cancelUniqueWork(uniqueWorkName(date, slotIndex, true))
+                    manager.cancelUniqueWork(uniqueWorkName(date, slotIndex, true) + "_delivery")
+                },
+                post = {
+                    notifySafely(notificationId, buildStandardNotification(
+                        displayMinutesBefore(minutesBefore, Duration.between(LocalDateTime.now(), actualLessonStart).toMillis()),
+                        lesson, slot, pendingIntent))
+                })
         }
-
         return Result.success()
-    }
-
-    private fun showLateStandardNotification(
-        notificationId: Int,
-        lesson: ResolvedLesson,
-        slot: ClassSlot,
-        actualLessonStart: LocalDateTime,
-        configuredMinutesBefore: Int,
-        pendingIntent: PendingIntent
-    ) {
-        val remainingMillis = Duration.between(
-            LocalDateTime.now(ZoneId.systemDefault()),
-            actualLessonStart
-        ).toMillis()
-        if (remainingMillis < -LATE_NOTIFICATION_GRACE_MS) return
-        notifySafely(
-            notificationId,
-            buildStandardNotification(
-                displayMinutesBefore(configuredMinutesBefore, remainingMillis),
-                lesson,
-                slot,
-                pendingIntent
-            )
-        )
     }
 
     private fun buildStandardNotification(
@@ -261,16 +167,14 @@ class LessonStartNotificationWorker(
         val body = renderLessonNotificationTemplate(config.startBodyTemplate, values)
             .ifBlank { buildNotificationBody(minutesBefore, lesson, slot) }
         return NotificationCompat.Builder(applicationContext, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_notification_school)
+            .setSmallIcon(R.drawable.ic_notification_person_raised_hand)
             .setContentTitle(title)
-            // Wear OS may render contentText without expanding BigTextStyle.
-            // Keep the complete customized body here so lines after the first are bridged too.
+            // Wear OS は BigTextStyle を展開せず contentText だけ橋渡しするため、全文を入れる。
             .setContentText(body)
             .setStyle(NotificationCompat.BigTextStyle().bigText(body))
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setCategory(NotificationCompat.CATEGORY_ALARM)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .setOnlyAlertOnce(true)
             .setAutoCancel(true)
             .setContentIntent(pendingIntent)
             .build()
@@ -284,8 +188,9 @@ class LessonStartNotificationWorker(
         minutesBefore: Int,
         progressCountsDown: Boolean,
         chipMode: LessonStartNotificationChipMode,
-        pendingIntent: PendingIntent
-    ) {
+        pendingIntent: PendingIntent,
+        coordinator: LessonNotificationDeliveryCoordinator
+    ): Boolean {
         val lessonStartMillis = liveUpdateTarget
             .atZone(ZoneId.systemDefault())
             .toInstant()
@@ -307,8 +212,12 @@ class LessonStartNotificationWorker(
                 chipMode = chipMode,
                 pendingIntent = pendingIntent
             )
-            setForegroundSafely(notificationId, notification)
-            notifySafely(notificationId, notification)
+            if (!coordinator.postLive(id.toString()) {
+                withTimeoutOrNull(10_000) {
+                    canPostPromotedNotifications() && setForegroundSafely(notificationId, notification) &&
+                        notifySafely(notificationId, notification)
+                } ?: false
+            }) return false
 
             delay(nextLiveUpdateDelayMillis(remainingMillis))
             remainingMillis = Duration.between(
@@ -316,18 +225,7 @@ class LessonStartNotificationWorker(
                 liveUpdateTarget
             ).toMillis()
         }
-
-        if (!isStopped) {
-            notifySafely(
-                notificationId,
-                buildStandardNotification(
-                    minutesBefore = 0,
-                    lesson = lesson,
-                    slot = slot,
-                    pendingIntent = pendingIntent
-                )
-            )
-        }
+        return !isStopped && remainingMillis <= 0
     }
 
     @Suppress("NewApi")
@@ -349,7 +247,7 @@ class LessonStartNotificationWorker(
         }.coerceIn(0, totalSeconds)
 
         val builder = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_notification_school)
+            .setSmallIcon(R.drawable.ic_notification_person_raised_hand)
             .setContentTitle(
                 applicationContext.getString(
                     R.string.lesson_start_live_update_title,
@@ -398,7 +296,7 @@ class LessonStartNotificationWorker(
         }.getOrDefault(false)
     }
 
-    private suspend fun setForegroundSafely(notificationId: Int, notification: Notification) {
+    private suspend fun setForegroundSafely(notificationId: Int, notification: Notification): Boolean {
         try {
             setForeground(
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -411,22 +309,25 @@ class LessonStartNotificationWorker(
                     ForegroundInfo(notificationId, notification)
                 }
             )
-        } catch (_: Exception) {
-            // Foreground promotion can fail on some devices; the normal notify path below still shows the update.
+            return true
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            Log.w(TAG, "Cannot promote live update worker; standard reminder remains scheduled", error)
+            return false
         }
     }
 
-    private fun notifySafely(notificationId: Int, notification: Notification) {
+    private fun notifySafely(notificationId: Int, notification: Notification): Boolean {
+        if (!applicationContext.canPostAppNotifications()) return false
         try {
             NotificationManagerCompat.from(applicationContext)
                 .notify(notificationId, notification)
-            if (!cloudSyncRequestedForNotification) {
-                cloudSyncRequestedForNotification = true
-                CloudFileSyncManager.requestSync(applicationContext)
-            }
+            return true
         } catch (_: SecurityException) {
             // The POST_NOTIFICATIONS permission can be revoked independently of this feature.
         }
+        return false
     }
 
     private fun nextLiveUpdateDelayMillis(remainingMillis: Long): Long {
@@ -537,574 +438,191 @@ class LessonStartNotificationWorker(
         manager.createNotificationChannel(channel)
     }
 
-    private fun resolveEffectiveLesson(
-        date: LocalDate,
-        slotIndex: Int,
-        dayTypeEntities: Map<LocalDate, DayTypeEntity>,
-        lessons: Map<LessonKey, LessonEntity>,
-        changedLessons: Map<Pair<LocalDate, Int>, ChangedLessonEntity>,
-        semesterTimetablesEnabled: Boolean
-    ): ResolvedLesson? {
-        if (date.dayOfWeek == DayOfWeek.SUNDAY) return null
-        val dayTypeEntity = dayTypeEntities[date]
-        val dayType = dayTypeEntity?.dayType ?: defaultDayType(date)
-        if (dayType == DayType.HOLIDAY) return null
-
-        val lessonDayOfWeek = dayTypeEntity?.overrideLessonDayOfWeek ?: date.dayOfWeek.value
-        val lessonDayType = dayTypeEntity?.overrideLessonDayType ?: dayType
-        val timetableTerm = timetableTermForDate(date, semesterTimetablesEnabled)
-        val base = lessons[
-            LessonKey(
-                academicYear = academicYearForDate(date),
-                timetableTerm = timetableTerm,
-                dayOfWeek = lessonDayOfWeek,
-                slotIndex = slotIndex
-            )
-        ]
-            ?.let { resolveLesson(lessonDayType, it) }
-        return applyChangedLesson(base, changedLessons[date to slotIndex])
-    }
-
-    private fun resolveLesson(dayType: DayType, lesson: LessonEntity): ResolvedLesson? {
-        return when (lesson.mode) {
-            LessonMode.WEEKLY -> {
-                if (lesson.weeklySubject.isBlank()) null
-                else ResolvedLesson(lesson.weeklySubject, lesson.weeklyTeacher, lesson.weeklyLocation)
-            }
-            LessonMode.ALTERNATING -> when (dayType) {
-                DayType.A -> if (lesson.aSubject.isBlank()) null else ResolvedLesson(lesson.aSubject, lesson.aTeacher, lesson.aLocation)
-                DayType.B -> if (lesson.bSubject.isBlank()) null else ResolvedLesson(lesson.bSubject, lesson.bTeacher, lesson.bLocation)
-                DayType.HOLIDAY -> null
-            }
-        }
-    }
-
-    private fun defaultDayType(date: LocalDate): DayType {
-        val weekend = date.dayOfWeek == DayOfWeek.SUNDAY
-        return if (weekend || JapaneseHolidayCalculator.isHoliday(date)) DayType.HOLIDAY else DayType.A
-    }
-
-    private fun SettingsEntity.classSlots(): List<ClassSlot> {
-        return generateClassSlots(
-            periodsPerDay = periodsPerDay,
-            periodDurationMin = periodDurationMin,
-            breakBetweenPeriodsMin = breakBetweenPeriodsMin,
-            lunchBreakMin = lunchBreakMin,
-            firstPeriodStartHour = firstPeriodStartHour,
-            firstPeriodStartMinute = firstPeriodStartMinute,
-            periodLabelStyle = periodLabelStyle,
-            lunchAfterPeriod = lunchAfterPeriod
-        )
-    }
-
-    private fun ExamLessonEntity.toClassSlot(periodLabelStyle: PeriodLabelStyle): ClassSlot {
-        return ClassSlot(
-            index = slotIndex,
-            label = formatExamPeriodLabel(slotIndex, periodLabelStyle),
-            start = java.time.LocalTime.of(startHour, startMinute),
-            end = java.time.LocalTime.of(endHour, endMinute)
-        )
-    }
-
-    private fun ExamLessonEntity.toResolvedLesson(): ResolvedLesson? {
-        if (subject.isBlank()) return null
-        return ResolvedLesson(subject, teacher, location.takeIf { it.isNotBlank() })
-    }
-
     companion object {
         private const val CHANNEL_ID = "lesson_start_notifications"
         private const val KEY_DATE = "date"
         private const val KEY_SLOT_INDEX = "slot_index"
+        private const val KEY_RECOVERY_AT = "recovery_at"
+        private const val RECOVERY_PREFERENCES = "lesson_notification_recovery_checks"
+        internal const val KEY_LIVE = "live_update"
+        internal const val KEY_SIGNATURE = "schedule_signature"
         private const val TAG = "LessonStartNotification"
         private const val WORK_TAG = "lesson_start_notifications"
-        private const val HORIZON_DAYS = ReminderSchedulingPolicy.LESSON_ALARM_HORIZON_DAYS
+        private const val HORIZON_DAYS = 30L
         private const val ONE_MINUTE_MS = 60_000L
         private const val LIVE_UPDATE_FAST_REFRESH_THRESHOLD_MS = 10 * ONE_MINUTE_MS
         private const val LIVE_UPDATE_SMOOTH_REFRESH_MS = 2_000L
         private const val LIVE_UPDATE_KEEP_ALIVE_MS = 15_000L
-        private const val LATE_NOTIFICATION_GRACE_MS = 60_000L
         private const val ALARM_PREFERENCES = "lesson_start_notification_alarms"
         private const val ALARM_KEYS = "scheduled_alarm_keys"
+        private const val PLAN_KEY = "schedule_v2"
         private val rescheduleMutex = Mutex()
+        private val deliveryGate = jp.linkserver.nittcsc.logic.ReminderDeliveryGate()
 
-        suspend fun rescheduleAll(context: Context) {
-            val appContext = context.applicationContext
-            AdditionalLessonNotificationWorker.rescheduleAll(appContext)
-            rescheduleMutex.withLock {
-                withContext(Dispatchers.IO) {
-                    WorkManager.getInstance(appContext)
-                        .cancelAllWorkByTag(WORK_TAG)
-                        .result
-                        .get()
-                    cancelScheduledAlarms(appContext)
-                }
-                scheduleUpcoming(appContext)
-            }
+        private fun signature(candidate: jp.linkserver.nittcsc.logic.UpcomingLessonCandidate<ResolvedLesson>,
+            settings: SettingsEntity, live: Boolean): String = listOf("countdown-end-v1", candidate, live,
+            settings.effectiveStartMinutes(),
+            if (live) listOf(settings.lessonStartNotificationLiveUpdatesEnabled,
+                settings.lessonStartNotificationLiveUpdateEarlyMinutes,
+                settings.lessonStartNotificationProgressCountsDown, settings.lessonStartNotificationChipMode) else "standard"
+        ).toString()
+
+        private fun notificationAt(candidate: jp.linkserver.nittcsc.logic.UpcomingLessonCandidate<ResolvedLesson>,
+            settings: SettingsEntity, live: Boolean): LocalDateTime {
+            val timing = jp.linkserver.nittcsc.logic.lessonReminderTiming(candidate.startsAt,
+                settings.effectiveStartMinutes(), settings.lessonStartNotificationLiveUpdatesEnabled,
+                Build.VERSION.SDK_INT >= 36, settings.lessonStartNotificationLiveUpdateEarlyMinutes)
+            return if (live) timing.liveAt ?: timing.standardAt else timing.standardAt
         }
 
-        /**
-         * Time-critical, one-shot delivery used directly by AlarmManager's receiver.
-         *
-         * WorkManager is deliberately not the first delivery hop here: expedited work can
-         * be downgraded after quota exhaustion and then start after the notification's late
-         * grace window. A later worker update uses the same ID and only-alert-once flag.
-         */
-        suspend fun deliverAlarmNotification(
-            context: Context,
-            date: LocalDate,
-            slotIndex: Int
-        ): Boolean {
+
+        /** 変更のないWorkerはKEEPし、実行中のカウントダウンを再登録で停止しない。 */
+        suspend fun rescheduleAll(context: Context, forceWorkUpdate: Boolean = false) = rescheduleMutex.withLock {
+            // フォーク独自: 追加通知（終了前など）の予約も同時に組み直す。
+            AdditionalLessonNotificationWorker.rescheduleAll(context.applicationContext)
             val appContext = context.applicationContext
             val dao = AppDatabase.getInstance(appContext).schedulerDao()
-            val settings = dao.getSettings() ?: return false.also {
-                ReminderDebug.log(
-                    "lesson alarm direct delivery skipped date=$date slotIndex=$slotIndex reason=no_settings"
-                )
-            }
-            if (!settings.lessonStartNotificationEnabled) return false.also {
-                ReminderDebug.log(
-                    "lesson alarm direct delivery skipped date=$date slotIndex=$slotIndex reason=disabled"
-                )
-            }
-            val config = settings.lessonNotificationCustomization()
-            val primaryTrigger = config.startTriggers.firstOrNull()
-            if (primaryTrigger?.enabled != true) return false.also {
-                ReminderDebug.log(
-                    "lesson alarm direct delivery skipped date=$date slotIndex=$slotIndex reason=trigger_disabled"
-                )
-            }
-
-            val specialLabel = dao.getDayType(date)?.holidaySpecialLabel
-            val examLessons = dao.getExamLessonsForDate(date)
-            val isExamDate = settings.enableExamTimetable &&
-                dao.getExamDaySchedule(date) != null &&
-                examLessons.any { it.hasEnteredContent() } &&
-                (specialLabel == HolidaySpecialLabel.MIDTERM || specialLabel == HolidaySpecialLabel.FINAL)
-            val examLesson = examLessons.firstOrNull { isExamDate && it.slotIndex == slotIndex }
-            val slot = if (isExamDate) {
-                examLesson?.let {
-                    ClassSlot(
-                        index = it.slotIndex,
-                        label = formatExamPeriodLabel(it.slotIndex, settings.periodLabelStyle),
-                        start = java.time.LocalTime.of(it.startHour, it.startMinute),
-                        end = java.time.LocalTime.of(it.endHour, it.endMinute)
-                    )
+            val schedule = EffectiveSchoolSchedule.load(dao) ?: return@withLock
+            val settings = schedule.settings
+            val preferences = appContext.getSharedPreferences(ALARM_PREFERENCES, Context.MODE_PRIVATE)
+            val workManager = WorkManager.getInstance(appContext)
+            if (!preferences.contains(PLAN_KEY)) {
+                // 旧版の一体型WorkerとAlarmだけを、一度限り解除する。
+                withContext(Dispatchers.IO) { workManager.cancelAllWorkByTag(WORK_TAG).result.get() }
+                preferences.getStringSet(ALARM_KEYS, emptySet()).orEmpty().forEach { key ->
+                    val parts = key.split('|')
+                    val date = runCatching { LocalDate.parse(parts[0]) }.getOrNull() ?: return@forEach
+                    val index = parts.getOrNull(1)?.toIntOrNull() ?: return@forEach
+                    val legacyIntent = Intent(appContext, LessonStartNotificationAlarmReceiver::class.java).apply {
+                        data = Uri.parse("nittcsc://lesson-start-notification/$date/$index")
+                    }
+                    val legacyId = (40_000 + (date.toEpochDay() % 10_000).toInt() * 10 + index).coerceAtLeast(40_000)
+                    val legacyAlarm = PendingIntent.getBroadcast(appContext, legacyId, legacyIntent,
+                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+                    ExactReminderAlarmScheduler.cancel(appContext, legacyAlarm)
+                    NotificationManagerCompat.from(appContext).cancel(legacyId)
                 }
-            } else {
-                generateClassSlots(
-                    periodsPerDay = settings.periodsPerDay,
-                    periodDurationMin = settings.periodDurationMin,
-                    breakBetweenPeriodsMin = settings.breakBetweenPeriodsMin,
-                    lunchBreakMin = settings.lunchBreakMin,
-                    firstPeriodStartHour = settings.firstPeriodStartHour,
-                    firstPeriodStartMinute = settings.firstPeriodStartMinute,
-                    periodLabelStyle = settings.periodLabelStyle,
-                    lunchAfterPeriod = settings.lunchAfterPeriod
-                ).firstOrNull { it.index == slotIndex }
-            } ?: return false.also {
-                ReminderDebug.log(
-                    "lesson alarm direct delivery skipped date=$date slotIndex=$slotIndex reason=slot_not_found"
-                )
+                preferences.edit().remove(ALARM_KEYS).apply()
             }
-            if (!isExamDate && dao.getCancelledLesson(date, slotIndex) != null) {
-                ReminderDebug.log(
-                    "lesson alarm direct delivery skipped date=$date slotIndex=$slotIndex reason=cancelled"
-                )
-                return false
-            }
-
-            val lesson = if (isExamDate) {
-                examLesson?.takeIf { it.subject.isNotBlank() }?.let {
-                    ResolvedLesson(it.subject, it.teacher, it.location.takeIf(String::isNotBlank))
-                }
-            } else {
-                resolveEffectiveLessonForSchedule(
-                    date = date,
-                    slotIndex = slotIndex,
-                    dayTypeEntities = dao.getDayTypesOnce().associateBy { it.date },
-                    lessons = dao.getLessonsOnce()
-                        .map { it.forTimetable(settings.enableAbTimetable) }
-                        .associateBy { it.lessonKey() },
-                    changedLessons = dao.getChangedLessonsOnce().associateBy { it.date to it.slotIndex },
-                    semesterTimetablesEnabled = settings.enableSemesterTimetables
-                )
-            }
-            if (lesson == null || lesson.subject.isBlank()) return false.also {
-                ReminderDebug.log(
-                    "lesson alarm direct delivery skipped date=$date slotIndex=$slotIndex reason=lesson_not_found"
-                )
-            }
-            if (isExcluded(lesson, dao.getLessonNotificationExclusionsOnce())) return false.also {
-                ReminderDebug.log(
-                    "lesson alarm direct delivery skipped date=$date slotIndex=$slotIndex reason=excluded"
-                )
-            }
-
-            val minutesBefore = primaryTrigger.minutesBefore.coerceIn(0, 360)
-            val actualLessonStart = LocalDateTime.of(date, slot.start)
-            val remainingMillis = Duration.between(
-                LocalDateTime.now(ZoneId.systemDefault()),
-                actualLessonStart
-            ).toMillis()
-            if (remainingMillis < -LATE_NOTIFICATION_GRACE_MS) return false.also {
-                ReminderDebug.log(
-                    "lesson alarm direct delivery skipped date=$date slotIndex=$slotIndex " +
-                        "reason=past_grace remainingMillis=$remainingMillis"
-                )
-            }
-            val displayMinutes = if (remainingMillis <= 0L || minutesBefore <= 0) {
-                0
-            } else {
-                ceil(remainingMillis / ONE_MINUTE_MS.toDouble()).toInt().coerceIn(1, minutesBefore)
-            }
-            val next = AdditionalLessonNotificationWorker.findNextLesson(appContext, date, slotIndex)
-            val values = LessonNotificationTemplateValues(
-                subject = lesson.subject,
-                teacher = lesson.teacher,
-                location = lesson.location.orEmpty(),
-                period = slot.label,
-                startTime = slot.start.toString(),
-                endTime = slot.end.toString(),
-                minutes = displayMinutes,
-                nextSubject = next?.subject ?: "なし",
-                nextTeacher = next?.teacher.orEmpty(),
-                nextLocation = next?.location.orEmpty(),
-                nextPeriod = next?.period.orEmpty(),
-                nextStartTime = next?.start?.toString().orEmpty()
-            )
-            val title = renderLessonNotificationTemplate(config.startTitleTemplate, values)
-                .ifBlank { appContext.getString(R.string.lesson_start_notification_title) }
-            val fallbackBody = if (displayMinutes <= 0) {
-                appContext.getString(R.string.lesson_start_notification_body_now, lesson.subject)
-            } else {
-                appContext.getString(
-                    R.string.lesson_start_notification_body,
-                    displayMinutes,
-                    lesson.subject
-                )
-            }
-            val body = renderLessonNotificationTemplate(config.startBodyTemplate, values)
-                .ifBlank { fallbackBody }
-            val id = notificationId(date, slotIndex)
-            val openAppIntent = Intent(appContext, MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            }
-            val contentIntent = PendingIntent.getActivity(
-                appContext,
-                id,
-                openAppIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-            val manager = appContext.getSystemService(NotificationManager::class.java)
-            manager.createNotificationChannel(
-                NotificationChannel(
-                    CHANNEL_ID,
-                    appContext.getString(R.string.lesson_start_notification_channel_name),
-                    NotificationManager.IMPORTANCE_HIGH
-                ).apply {
-                    description = appContext.getString(R.string.lesson_start_notification_channel_desc)
-                    lockscreenVisibility = Notification.VISIBILITY_PUBLIC
-                    enableVibration(true)
-                }
-            )
-            val notification = NotificationCompat.Builder(appContext, CHANNEL_ID)
-                .setSmallIcon(R.drawable.ic_notification_school)
-                .setContentTitle(title)
-                .setContentText(body)
-                .setStyle(NotificationCompat.BigTextStyle().bigText(body))
-                .setPriority(NotificationCompat.PRIORITY_MAX)
-                .setCategory(NotificationCompat.CATEGORY_ALARM)
-                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-                .setOnlyAlertOnce(true)
-                .setAutoCancel(true)
-                .setContentIntent(contentIntent)
-                .build()
-            val posted = NotificationManagerCompat.from(appContext)
-                .notifyIfAllowed(appContext, id, notification)
-            ReminderDebug.log(
-                "lesson alarm direct delivery finished date=$date slotIndex=$slotIndex posted=$posted"
-            )
-            return posted
-        }
-
-        private suspend fun scheduleUpcoming(context: Context) {
-            val dao = AppDatabase.getInstance(context).schedulerDao()
-            val settings = dao.getSettings() ?: return
-            if (!settings.lessonStartNotificationEnabled) return
-            val primaryTrigger = settings.lessonNotificationCustomization().startTriggers.firstOrNull() ?: return
-            if (!primaryTrigger.enabled) return
-
+            val previous = org.json.JSONObject(preferences.getString(PLAN_KEY, "{}").orEmpty())
+            val next = org.json.JSONObject()
             val today = LocalDate.now()
-            val now = LocalDateTime.now(ZoneId.systemDefault())
-            val endDate = minOf(settings.termEnd, today.plusDays(HORIZON_DAYS))
-            if (endDate.isBefore(today)) return
-
-            val slots = settings.classSlots()
-            val dayTypeEntities = dao.getDayTypesOnce().associateBy { it.date }
-            val lessons = dao.getLessonsOnce().map { it.forTimetable(settings.enableAbTimetable) }.associateBy { it.lessonKey() }
-            val changedLessons = dao.getChangedLessonsOnce().associateBy { it.date to it.slotIndex }
-            val cancelledLessons = dao.getCancelledLessonsOnce().map { it.date to it.slotIndex }.toSet()
-            val examLessonsByDate = dao.getExamLessonsOnce().groupBy { it.date }
-            val examScheduleDates = dao.getExamDaySchedulesOnce()
-                .map { it.date }
-                .filterTo(mutableSetOf()) { date ->
-                    settings.enableExamTimetable && examLessonsByDate[date].orEmpty().any { it.hasEnteredContent() } && when (dayTypeEntities[date]?.holidaySpecialLabel) {
-                        HolidaySpecialLabel.MIDTERM, HolidaySpecialLabel.FINAL -> true
-                        else -> false
-                    }
-                }
+            val now = LocalDateTime.now()
             val exclusions = dao.getLessonNotificationExclusionsOnce()
-            val minutesBefore = primaryTrigger.minutesBefore.coerceIn(0, 360).toLong()
-            val potentialLiveUpdates =
-                settings.lessonStartNotificationLiveUpdatesEnabled &&
-                    Build.VERSION.SDK_INT >= 36 &&
-                    minutesBefore > 0L
-            val liveUpdateEarlyMinutes = if (potentialLiveUpdates) {
-                settings.lessonStartNotificationLiveUpdateEarlyMinutes.coerceIn(0, 5).toLong()
-            } else {
-                0L
-            }
-
-            for (date in today.toDateRange(endDate)) {
-                val isExamDate = date in examScheduleDates
-                val dateExamLessons = examLessonsByDate[date].orEmpty().associateBy { it.slotIndex }
-                val dateSlots = if (isExamDate) {
-                    dateExamLessons.values.sortedBy { it.slotIndex }.map { exam ->
-                        ClassSlot(
-                            index = exam.slotIndex,
-                            label = formatExamPeriodLabel(exam.slotIndex, settings.periodLabelStyle),
-                            start = java.time.LocalTime.of(exam.startHour, exam.startMinute),
-                            end = java.time.LocalTime.of(exam.endHour, exam.endMinute)
-                        )
-                    }
-                } else {
-                    slots
-                }
-                for (slot in dateSlots) {
-                    if (!isExamDate && cancelledLessons.contains(date to slot.index)) continue
-                    val lesson = if (isExamDate) {
-                        dateExamLessons[slot.index]?.let { exam ->
-                            if (exam.subject.isBlank()) null else ResolvedLesson(
-                                exam.subject,
-                                exam.teacher,
-                                exam.location.takeIf { it.isNotBlank() }
-                            )
+            if (settings.lessonStartNotificationEnabled &&
+                settings.lessonNotificationCustomization().startTriggers.firstOrNull()?.enabled == true
+            ) {
+                val end = minOf(settings.termEnd, today.plusDays(HORIZON_DAYS))
+                var date = maxOf(today, settings.termStart)
+                while (date <= end) {
+                    schedule.lessonsOn(date).filter { !isExcluded(it.content, exclusions) }.forEach { candidate ->
+                        if (candidate.startsAt.plusMinutes(1).isBefore(now)) return@forEach
+                        for (live in listOf(false, true)) {
+                            if (live && (Build.VERSION.SDK_INT < 36 || !settings.lessonStartNotificationLiveUpdatesEnabled ||
+                                settings.effectiveStartMinutes() <= 0)) continue
+                            val at = notificationAt(candidate, settings, live)
+                            val key = alarmKey(date, candidate.slotIndex, live)
+                            val signature = signature(candidate, settings, live)
+                            val planSignature = "$signature|${ZoneId.systemDefault()}"
+                            if (!live && previous.optString(key) != planSignature) {
+                                workManager.cancelUniqueWork(uniqueWorkName(date, candidate.slotIndex, false) + "_recovery")
+                            }
+                            next.put(key, planSignature)
+                            val exact = ExactReminderAlarmScheduler.schedule(appContext, at,
+                                alarmPendingIntent(appContext, date, candidate.slotIndex, live, signature))
+                            val fallbackAt = if (exact) at.plusMinutes(1) else at
+                            val request = OneTimeWorkRequestBuilder<LessonStartNotificationWorker>()
+                                .setInputData(workData(date, candidate.slotIndex, live, signature))
+                                .setInitialDelay(Duration.between(now, fallbackAt).toMillis().coerceAtLeast(0), TimeUnit.MILLISECONDS)
+                                .addTag(WORK_TAG).build()
+                            workManager.enqueueUniqueWork(uniqueWorkName(date, candidate.slotIndex, live),
+                                if (previous.optString(key) == planSignature && (!forceWorkUpdate || !at.isAfter(now)))
+                                    ExistingWorkPolicy.KEEP else ExistingWorkPolicy.REPLACE, request)
                         }
-                    } else {
-                        resolveEffectiveLessonForSchedule(
-                            date = date,
-                            slotIndex = slot.index,
-                            dayTypeEntities = dayTypeEntities,
-                            lessons = lessons,
-                            changedLessons = changedLessons,
-                            semesterTimetablesEnabled = settings.enableSemesterTimetables
-                        )
-                    } ?: continue
-                    if (lesson.subject.isBlank() || isExcluded(lesson, exclusions)) continue
-
-                    val lessonStart = LocalDateTime.of(date, slot.start)
-                    if (!lessonStart.isAfter(now)) continue
-                    val notificationAt = lessonStart
-                        .minusMinutes(liveUpdateEarlyMinutes)
-                        .minusMinutes(minutesBefore)
-                    val exactAlarmScheduled = scheduleExactAlarm(
-                        context,
-                        date,
-                        slot.index,
-                        notificationAt
-                    )
-                    val fallbackNotificationAt = if (exactAlarmScheduled) {
-                        notificationAt.plusMinutes(1)
-                    } else {
-                        notificationAt
                     }
-                    val delayMillis = Duration.between(now, fallbackNotificationAt)
-                        .toMillis()
-                        .coerceAtLeast(0L)
-
-                    val request = OneTimeWorkRequestBuilder<LessonStartNotificationWorker>()
-                        .setInputData(
-                            Data.Builder()
-                                .putString(KEY_DATE, date.toString())
-                                .putInt(KEY_SLOT_INDEX, slot.index)
-                                .build()
-                        )
-                        .setInitialDelay(delayMillis, TimeUnit.MILLISECONDS)
-                        .addTag(WORK_TAG)
-                        .build()
-
-                    WorkManager.getInstance(context)
-                        .enqueueUniqueWork(
-                            uniqueWorkName(date, slot.index),
-                            ExistingWorkPolicy.REPLACE,
-                            request
-                        )
+                    date = date.plusDays(1)
                 }
             }
-        }
-
-        fun enqueueNow(context: Context, date: LocalDate, slotIndex: Int) {
-            val request = OneTimeWorkRequestBuilder<LessonStartNotificationWorker>()
-                .setInputData(
-                    Data.Builder()
-                        .putString(KEY_DATE, date.toString())
-                        .putInt(KEY_SLOT_INDEX, slotIndex)
-                        .build()
-                )
-                .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
-                .addTag(WORK_TAG)
-                .build()
-
-            WorkManager.getInstance(context.applicationContext)
-                .enqueueUniqueWork(
-                    uniqueWorkName(date, slotIndex),
-                    ExistingWorkPolicy.REPLACE,
-                    request
-                )
-        }
-
-        private fun scheduleExactAlarm(
-            context: Context,
-            date: LocalDate,
-            slotIndex: Int,
-            notificationAt: LocalDateTime
-        ): Boolean {
-            val alarmManager = context.getSystemService(AlarmManager::class.java)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !alarmManager.canScheduleExactAlarms()) {
-                return false
+            previous.keys().forEach { key ->
+                if (!next.has(key)) {
+                    val parts = key.split('|')
+                    val date = LocalDate.parse(parts[0])
+                    val index = parts[1].toInt()
+                    val live = parts[2].toBoolean()
+                    workManager.cancelUniqueWork(uniqueWorkName(date, index, live))
+                    workManager.cancelUniqueWork(uniqueWorkName(date, index, live) + "_delivery")
+                    if (!live) workManager.cancelUniqueWork(uniqueWorkName(date, index, false) + "_recovery")
+                    ExactReminderAlarmScheduler.cancel(appContext, alarmPendingIntent(appContext, date, index, live, null))
+                    // 終了済みの通常通知は残す。有効な授業の変更・OFF時には取り消す。
+                    if (live || date >= today && !wasAnyDelivered(appContext, date, index))
+                        NotificationManagerCompat.from(appContext).cancel(notificationId(date, index, live))
+                }
             }
-            val triggerAtMillis = notificationAt
-                .atZone(ZoneId.systemDefault())
-                .toInstant()
-                .toEpochMilli()
-            if (triggerAtMillis <= System.currentTimeMillis()) return false
-
-            return runCatching {
-                alarmManager.setExactAndAllowWhileIdle(
-                    AlarmManager.RTC_WAKEUP,
-                    triggerAtMillis,
-                    alarmPendingIntent(context, date, slotIndex)
-                )
-                val preferences = context.getSharedPreferences(ALARM_PREFERENCES, Context.MODE_PRIVATE)
-                val keys = preferences.getStringSet(ALARM_KEYS, emptySet()).orEmpty().toMutableSet()
-                keys += alarmKey(date, slotIndex)
-                preferences.edit().putStringSet(ALARM_KEYS, keys).apply()
-                true
-            }.onFailure {
-                Log.w(TAG, "Cannot schedule exact lesson notification alarm", it)
-            }.getOrDefault(false)
+            preferences.edit().putString(PLAN_KEY, next.toString()).apply()
         }
 
-        private fun cancelScheduledAlarms(context: Context) {
-            val alarmManager = context.getSystemService(AlarmManager::class.java)
-            val preferences = context.getSharedPreferences(ALARM_PREFERENCES, Context.MODE_PRIVATE)
-            preferences.getStringSet(ALARM_KEYS, emptySet()).orEmpty().forEach { key ->
-                val parts = key.split('|')
-                val date = parts.getOrNull(0)?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
-                    ?: return@forEach
-                val slotIndex = parts.getOrNull(1)?.toIntOrNull() ?: return@forEach
-                alarmManager.cancel(alarmPendingIntent(context, date, slotIndex))
-            }
-            preferences.edit().remove(ALARM_KEYS).apply()
+        fun enqueueNow(context: Context, date: LocalDate, slotIndex: Int, live: Boolean = false, signature: String? = null) {
+            if (signature == null) return
+            val builder = OneTimeWorkRequestBuilder<LessonStartNotificationWorker>()
+                .setInputData(workData(date, slotIndex, live, signature)).addTag(WORK_TAG)
+            if (Build.VERSION.SDK_INT >= 31) builder.setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+            WorkManager.getInstance(context.applicationContext).enqueueUniqueWork(
+                uniqueWorkName(date, slotIndex, live) + "_delivery", ExistingWorkPolicy.KEEP, builder.build())
         }
 
-        private fun alarmPendingIntent(
-            context: Context,
-            date: LocalDate,
-            slotIndex: Int
-        ): PendingIntent {
+        private fun enqueueRecovery(context: Context, date: LocalDate, index: Int, signature: String, notBefore: LocalDateTime) {
+            val preferences = context.getSharedPreferences(RECOVERY_PREFERENCES, Context.MODE_PRIVATE)
+            val key = "$date|$index|$signature"
+            val now = System.currentTimeMillis()
+            val pending = preferences.getLong(key, 0)
+            if (pending > now - 60_000 && pending != 0L) return
+            val at = maxOf(now + 1_000, notBefore.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli())
+            val data = Data.Builder().putAll(workData(date, index, false, signature)).putLong(KEY_RECOVERY_AT, at).build()
+            val request = OneTimeWorkRequestBuilder<LessonStartNotificationWorker>().setInputData(data)
+                .setInitialDelay(at - now, TimeUnit.MILLISECONDS).addTag(WORK_TAG).build()
+            // 自分が再確認Workerの場合も、実行中の処理をキャンセルせず次の確認をつなぐ。
+            WorkManager.getInstance(context).enqueueUniqueWork(uniqueWorkName(date, index, false) + "_recovery",
+                ExistingWorkPolicy.APPEND_OR_REPLACE, request)
+            preferences.edit().putLong(key, at).apply()
+        }
+
+        private fun clearRecoveryCheck(context: Context, date: LocalDate, index: Int, signature: String, at: Long) {
+            if (at == 0L) return
+            val preferences = context.getSharedPreferences(RECOVERY_PREFERENCES, Context.MODE_PRIVATE)
+            val key = "$date|$index|$signature"
+            if (preferences.getLong(key, 0) == at) preferences.edit().remove(key).apply()
+        }
+
+        private fun workData(date: LocalDate, index: Int, live: Boolean, signature: String): Data = Data.Builder()
+            .putString(KEY_DATE, date.toString()).putInt(KEY_SLOT_INDEX, index)
+            .putBoolean(KEY_LIVE, live).putString(KEY_SIGNATURE, signature).build()
+
+        private fun alarmPendingIntent(context: Context, date: LocalDate, slotIndex: Int, live: Boolean, signature: String?): PendingIntent {
             val intent = Intent(context, LessonStartNotificationAlarmReceiver::class.java).apply {
-                data = Uri.parse("nittcsc://lesson-start-notification/$date/$slotIndex")
+                data = Uri.parse("nittcsc://lesson-start-notification/$date/$slotIndex" + if (live) "/live" else "")
                 putExtra(LessonStartNotificationAlarmReceiver.EXTRA_DATE, date.toString())
                 putExtra(LessonStartNotificationAlarmReceiver.EXTRA_SLOT_INDEX, slotIndex)
+                putExtra(KEY_LIVE, live)
+                putExtra(KEY_SIGNATURE, signature)
             }
-            return PendingIntent.getBroadcast(
-                context,
-                notificationId(date, slotIndex),
-                intent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
+            return PendingIntent.getBroadcast(context, notificationId(date, slotIndex, live), intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         }
 
-        private fun alarmKey(date: LocalDate, slotIndex: Int): String = "$date|$slotIndex"
+        private fun alarmKey(date: LocalDate, index: Int, live: Boolean) = "$date|$index|$live"
+        private fun uniqueWorkName(date: LocalDate, index: Int, live: Boolean) =
+            "lesson_start_notification_${date}_${index}" + if (live) "_live" else ""
+        private fun notificationId(date: LocalDate, index: Int, live: Boolean = false): Int =
+            40_000 + (date.toEpochDay() % 10_000).toInt() * 20 + index + if (live) 1_000_000 else 0
 
-        private fun resolveEffectiveLessonForSchedule(
-            date: LocalDate,
-            slotIndex: Int,
-            dayTypeEntities: Map<LocalDate, DayTypeEntity>,
-            lessons: Map<LessonKey, LessonEntity>,
-            changedLessons: Map<Pair<LocalDate, Int>, ChangedLessonEntity>,
-            semesterTimetablesEnabled: Boolean
-        ): ResolvedLesson? {
-            if (date.dayOfWeek == DayOfWeek.SUNDAY) return null
-            val dayTypeEntity = dayTypeEntities[date]
-            val dayType = dayTypeEntity?.dayType ?: defaultDayTypeForSchedule(date)
-            if (dayType == DayType.HOLIDAY) return null
+        private fun deliveryPreferences(context: Context) = context.getSharedPreferences("lesson_notification_deliveries", Context.MODE_PRIVATE)
+        private fun wasAnyDelivered(context: Context, date: LocalDate, index: Int) =
+            deliveryPreferences(context).contains(alarmKey(date, index, false))
 
-            val lessonDayOfWeek = dayTypeEntity?.overrideLessonDayOfWeek ?: date.dayOfWeek.value
-            val lessonDayType = dayTypeEntity?.overrideLessonDayType ?: dayType
-            val timetableTerm = timetableTermForDate(date, semesterTimetablesEnabled)
-            val base = lessons[
-                LessonKey(
-                    academicYear = academicYearForDate(date),
-                    timetableTerm = timetableTerm,
-                    dayOfWeek = lessonDayOfWeek,
-                    slotIndex = slotIndex
-                )
-            ]
-                ?.let { resolveLessonForSchedule(lessonDayType, it) }
-            return applyChangedLesson(base, changedLessons[date to slotIndex])
-        }
-
-        private fun resolveLessonForSchedule(dayType: DayType, lesson: LessonEntity): ResolvedLesson? {
-            return when (lesson.mode) {
-                LessonMode.WEEKLY -> {
-                    if (lesson.weeklySubject.isBlank()) null
-                    else ResolvedLesson(lesson.weeklySubject, lesson.weeklyTeacher, lesson.weeklyLocation)
-                }
-                LessonMode.ALTERNATING -> when (dayType) {
-                    DayType.A -> if (lesson.aSubject.isBlank()) null else ResolvedLesson(lesson.aSubject, lesson.aTeacher, lesson.aLocation)
-                    DayType.B -> if (lesson.bSubject.isBlank()) null else ResolvedLesson(lesson.bSubject, lesson.bTeacher, lesson.bLocation)
-                    DayType.HOLIDAY -> null
-                }
-            }
-        }
-
-        private fun defaultDayTypeForSchedule(date: LocalDate): DayType {
-            val weekend = date.dayOfWeek == DayOfWeek.SUNDAY
-            return if (weekend || JapaneseHolidayCalculator.isHoliday(date)) DayType.HOLIDAY else DayType.A
-        }
-
-        private fun SettingsEntity.classSlots(): List<ClassSlot> {
-            return generateClassSlots(
-                periodsPerDay = periodsPerDay,
-                periodDurationMin = periodDurationMin,
-                breakBetweenPeriodsMin = breakBetweenPeriodsMin,
-                lunchBreakMin = lunchBreakMin,
-                firstPeriodStartHour = firstPeriodStartHour,
-                firstPeriodStartMinute = firstPeriodStartMinute,
-                periodLabelStyle = periodLabelStyle,
-                lunchAfterPeriod = lunchAfterPeriod
-            )
-        }
-
-        private fun uniqueWorkName(date: LocalDate, slotIndex: Int): String {
-            return "lesson_start_notification_${date}_$slotIndex"
-        }
-
-        private fun notificationId(date: LocalDate, slotIndex: Int): Int {
-            return (40_000 + (date.toEpochDay() % 10_000).toInt() * 10 + slotIndex).coerceAtLeast(40_000)
-        }
-
-        private fun LocalDate.toDateRange(endDate: LocalDate): Sequence<LocalDate> {
-            return generateSequence(this) { current ->
-                current.plusDays(1).takeIf { !it.isAfter(endDate) }
-            }
-        }
     }
 }
 
-private fun isExcluded(
+internal fun isExcluded(
     lesson: ResolvedLesson,
     exclusions: List<LessonNotificationExclusionEntity>
 ): Boolean {
@@ -1134,3 +652,17 @@ private fun teacherMatches(expectedTeacher: String, actualTeacher: String): Bool
         .filter { it.isNotBlank() }
         .any { it.equals(expectedTeacher.trim(), ignoreCase = true) }
 }
+
+/** 通知テンプレートの「次の授業」差し込み用。 */
+private data class NextLessonForTemplate(
+    val subject: String,
+    val teacher: String,
+    val location: String,
+    val period: String,
+    val start: java.time.LocalTime
+)
+
+/** カスタマイズ設定の主トリガー分数を優先し、未設定なら従来の設定値を使う。 */
+internal fun SettingsEntity.effectiveStartMinutes(): Int =
+    (lessonNotificationCustomization().startTriggers.firstOrNull()?.minutesBefore
+        ?: lessonStartNotificationMinutesBefore).coerceIn(0, 360)

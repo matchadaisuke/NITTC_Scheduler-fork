@@ -19,11 +19,18 @@ enum class LessonMode {
     ALTERNATING
 }
 
-enum class HolidaySpecialLabel {
-    MIDTERM,
-    FINAL,
-    SCHOOL_CLOSED,
-    EXCURSION
+enum class HolidaySpecialLabel(
+    val usesExamTimetable: Boolean = false,
+    val usesRegularCalendarTextColor: Boolean = false,
+    val isSelectable: Boolean = true
+) {
+    MIDTERM(usesExamTimetable = true, usesRegularCalendarTextColor = true),
+    FINAL(usesExamTimetable = true, usesRegularCalendarTextColor = true),
+    // Keep this value so older database rows, backups, and sync payloads remain readable.
+    SCHOOL_CLOSED(isSelectable = false),
+    EXCURSION(usesRegularCalendarTextColor = true),
+    EVENT(usesRegularCalendarTextColor = true),
+    EXAM_RETURN(usesRegularCalendarTextColor = true)
 }
 
 enum class LessonStartNotificationChipMode {
@@ -37,6 +44,7 @@ data class SettingsEntity(
     val termStart: LocalDate,
     val termEnd: LocalDate,
     val activeAcademicYear: Int = 0,
+    val pendingLegacyTimetableYear: Int? = null,
     val enableLocalAi: Boolean = false,
     val enableNaturalLanguageTaskAdd: Boolean = false,
     val enableLessonNotes: Boolean = true,
@@ -51,13 +59,17 @@ data class SettingsEntity(
     val useKosenMode: Boolean = true,
     val periodLabelStyle: PeriodLabelStyle = PeriodLabelStyle.PAIR_KOSHI,
     val enableSemesterTimetables: Boolean = true,
+    val secondTermStartMonth: Int = 10,
+    val secondTermStartDay: Int = 1,
     val enableAbTimetable: Boolean = true,
     val initialSetupCompleted: Boolean = true,
     val useDrawerNavigation: Boolean = false,
+    val showSyncButton: Boolean = false,
     val addTasksToCalendar: Boolean = false,
     val showCurrentTimeMarker: Boolean = false,
     val arrivalHour: Int = 8,
     val arrivalMinute: Int = 30,
+    val arrivalTimeAuto: Boolean = true,
     val departureHour: Int = -1,
     val departureMinute: Int = -1,
     val unifyTaskPlanView: Boolean = false,
@@ -68,7 +80,7 @@ data class SettingsEntity(
     val lessonStartNotificationMinutesBefore: Int = 10,
     val lessonStartNotificationLiveUpdatesEnabled: Boolean = true,
     val lessonStartNotificationProgressCountsDown: Boolean = false,
-    val lessonStartNotificationLiveUpdateEarlyMinutes: Int = 1,
+    val lessonStartNotificationLiveUpdateEarlyMinutes: Int = 0,
     val lessonStartNotificationChipMode: LessonStartNotificationChipMode = LessonStartNotificationChipMode.MINUTE_TEXT,
     val syncLessonsToCalendar: Boolean = false,
     val lessonCalendarSyncStart: LocalDate? = null,
@@ -318,6 +330,7 @@ data class SyncRegisteredDeviceEntity(
     val lastPlansSyncAt: Long = 0L,
     val lastScheduleSettingsSyncAt: Long = 0L,
     val lastLessonsSyncAt: Long = 0L,
+    val lastLessonPartitionsSyncAt: String = "{}",
     val lastDayTypesSyncAt: Long = 0L,
     val lastLongBreaksSyncAt: Long = 0L,
     val lastCancelledLessonsSyncAt: Long = 0L,

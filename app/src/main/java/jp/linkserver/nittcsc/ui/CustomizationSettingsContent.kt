@@ -138,83 +138,7 @@ internal fun CustomizationScheduleSettingsContent(
 }
 
 @Composable
-internal fun CustomizationNotificationSettingsContent(
-    settings: SettingsEntity?,
-    onUpdate: (LessonNotificationCustomization) -> Unit
-) {
-    settings ?: return
-    val config = settings.lessonNotificationCustomization()
-
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(start = 16.dp)
-    ) {
-        Column(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            Text(
-                text = stringResource(R.string.label_lesson_notification_children),
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-
-            config.startTriggers.take(2).forEachIndexed { index, trigger ->
-                NotificationTriggerEditor(
-                    title = stringResource(R.string.label_lesson_notification_start_child, index + 1),
-                    trigger = trigger,
-                    onChange = { changed ->
-                        val values = config.startTriggers.toMutableList().also { it[index] = changed }
-                        onUpdate(config.copy(startTriggers = values))
-                    }
-                )
-            }
-            config.endTriggers.take(2).forEachIndexed { index, trigger ->
-                NotificationTriggerEditor(
-                    title = stringResource(R.string.label_lesson_notification_end_child, index + 1),
-                    trigger = trigger,
-                    onChange = { changed ->
-                        val values = config.endTriggers.toMutableList().also { it[index] = changed }
-                        onUpdate(config.copy(endTriggers = values))
-                    }
-                )
-            }
-
-            HorizontalDivider()
-            Text(
-                stringResource(R.string.lesson_notification_template_variable_help),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            TemplateField(
-                label = "開始通知タイトル",
-                value = config.startTitleTemplate,
-                onChange = { onUpdate(config.copy(startTitleTemplate = it)) }
-            )
-            TemplateField(
-                label = "開始通知本文",
-                value = config.startBodyTemplate,
-                multiline = true,
-                onChange = { onUpdate(config.copy(startBodyTemplate = it)) }
-            )
-            TemplateField(
-                label = "終了通知タイトル",
-                value = config.endTitleTemplate,
-                onChange = { onUpdate(config.copy(endTitleTemplate = it)) }
-            )
-            TemplateField(
-                label = "終了通知本文",
-                value = config.endBodyTemplate,
-                multiline = true,
-                onChange = { onUpdate(config.copy(endBodyTemplate = it)) }
-            )
-        }
-    }
-}
-
-@Composable
-private fun NotificationTriggerEditor(
+internal fun NotificationTriggerEditor(
     title: String,
     trigger: LessonNotificationTrigger,
     onChange: (LessonNotificationTrigger) -> Unit
@@ -253,10 +177,11 @@ private fun NotificationTriggerEditor(
 }
 
 @Composable
-private fun TemplateField(
+internal fun TemplateField(
     label: String,
     value: String,
     multiline: Boolean = false,
+    variables: List<TemplateVariable>? = null,
     onChange: (String) -> Unit
 ) {
     var draft by rememberSaveable(stateSaver = TextFieldValue.Saver) {
@@ -297,7 +222,7 @@ private fun TemplateField(
             singleLine = !multiline,
             minLines = if (multiline) 3 else 1
         )
-        TemplateVariablePicker { variable ->
+        TemplateVariablePicker(variables = variables) { variable ->
             val selectionStart = minOf(draft.selection.start, draft.selection.end)
             val selectionEnd = maxOf(draft.selection.start, draft.selection.end)
             val updatedText = draft.text.replaceRange(selectionStart, selectionEnd, variable)
@@ -311,17 +236,13 @@ private fun TemplateField(
     }
 }
 
-private data class TemplateVariable(
+internal data class TemplateVariable(
     val token: String,
     val label: String
 )
 
 @Composable
-private fun TemplateVariablePicker(
-    onVariableSelected: (String) -> Unit
-) {
-    var expanded by remember { mutableStateOf(false) }
-    val variables = listOf(
+internal fun lessonTemplateVariables(): List<TemplateVariable> = listOf(
         TemplateVariable("{subject}", stringResource(R.string.lesson_notification_variable_subject)),
         TemplateVariable("{teacher}", stringResource(R.string.lesson_notification_variable_teacher)),
         TemplateVariable("{location}", stringResource(R.string.lesson_notification_variable_location)),
@@ -334,7 +255,32 @@ private fun TemplateVariablePicker(
         TemplateVariable("{next_location}", stringResource(R.string.lesson_notification_variable_next_location)),
         TemplateVariable("{next_period}", stringResource(R.string.lesson_notification_variable_next_period)),
         TemplateVariable("{next_start_time}", stringResource(R.string.lesson_notification_variable_next_start_time))
-    )
+)
+
+@Composable
+internal fun tripTemplateVariables(arrival: Boolean): List<TemplateVariable> = buildList {
+    add(TemplateVariable("{minutes}", stringResource(R.string.notification_trip_variable_minutes)))
+    add(TemplateVariable("{time}", stringResource(R.string.notification_trip_variable_time)))
+    add(TemplateVariable("{first_subject}", stringResource(R.string.notification_trip_variable_first_subject)))
+    add(TemplateVariable("{first_location}", stringResource(R.string.notification_trip_variable_first_location)))
+    add(TemplateVariable("{first_period}", stringResource(R.string.notification_trip_variable_first_period)))
+    add(TemplateVariable("{first_start_time}", stringResource(R.string.notification_trip_variable_first_start_time)))
+    add(TemplateVariable("{lesson_count}", stringResource(R.string.notification_trip_variable_lesson_count)))
+    if (!arrival) {
+        add(TemplateVariable("{tomorrow_first_subject}", stringResource(R.string.notification_trip_variable_tomorrow_first_subject)))
+        add(TemplateVariable("{tomorrow_first_location}", stringResource(R.string.notification_trip_variable_tomorrow_first_location)))
+        add(TemplateVariable("{tomorrow_first_period}", stringResource(R.string.notification_trip_variable_tomorrow_first_period)))
+        add(TemplateVariable("{tomorrow_first_start_time}", stringResource(R.string.notification_trip_variable_tomorrow_first_start_time)))
+    }
+}
+
+@Composable
+private fun TemplateVariablePicker(
+    variables: List<TemplateVariable>? = null,
+    onVariableSelected: (String) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val variables = variables ?: lessonTemplateVariables()
 
     Box(
         modifier = Modifier.fillMaxWidth(),

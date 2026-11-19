@@ -3,12 +3,15 @@ package jp.linkserver.nittcsc.ui.theme
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.MaterialExpressiveTheme
-import androidx.compose.material3.MotionScheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
+import jp.linkserver.pyrite.theme.PyriteTheme
+import jp.linkserver.pyrite.theme.PyriteStyle
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.movableContentOf
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
@@ -90,6 +93,14 @@ fun AppTheme(
     dynamicColor: Boolean = true,
     content: @Composable () -> Unit
 ) {
+    val currentContent = rememberUpdatedState(content)
+    val stableContent = remember { movableContentOf { currentContent.value() } }
+    val cards: @Composable () -> Unit = {
+        CompositionLocalProvider(jp.linkserver.goldy.compose.LocalUpdateCardStyle provides
+            jp.linkserver.goldy.compose.UpdateCardStyle(
+                containerColor=if(darkTheme) MaterialTheme.colorScheme.surfaceContainerHigh else MaterialTheme.colorScheme.surfaceContainerLowest,
+                shape=MaterialTheme.shapes.large)) { stableContent() }
+    }
     val context = LocalContext.current
     val colorScheme = when {
         dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
@@ -114,34 +125,35 @@ fun AppTheme(
     }
 
     val effectiveMode = uiDesignMode.effective(InternalFeatureFlags.MATERIAL_3_EXPRESSIVE)
-    val typography = when (effectiveMode) {
-        UiDesignMode.MATERIAL_3 -> Typography
-        UiDesignMode.MATERIAL_3_EXPRESSIVE -> ExpressiveTypography
-    }
-    val shapes = when (effectiveMode) {
-        UiDesignMode.MATERIAL_3 -> Shapes
-        UiDesignMode.MATERIAL_3_EXPRESSIVE -> ExpressiveShapes
-    }
-    val latestContent by rememberUpdatedState(content)
-    val movableContent = remember {
-        movableContentOf { latestContent() }
-    }
 
-    CompositionLocalProvider(LocalUiDesignMode provides effectiveMode) {
+
+    CompositionLocalProvider(LocalUiDesignMode provides effectiveMode, LocalAppDarkTheme provides darkTheme) {
         when (effectiveMode) {
             UiDesignMode.MATERIAL_3 -> MaterialTheme(
                 colorScheme = colorScheme,
-                typography = typography,
-                shapes = shapes,
-                content = movableContent
+                typography = Typography,
+                shapes = Shapes,
+                content = cards
             )
-            UiDesignMode.MATERIAL_3_EXPRESSIVE -> MaterialExpressiveTheme(
-                colorScheme = colorScheme,
-                motionScheme = MotionScheme.expressive(),
-                typography = typography,
-                shapes = shapes,
-                content = movableContent
-            )
+            UiDesignMode.MATERIAL_3_EXPRESSIVE -> PyriteTheme(
+                style = PyriteStyle.Material3Expressive,
+                darkTheme = darkTheme,
+                dynamicColor = dynamicColor
+            ) {
+                // エラー系4ロールだけ通常M3と共有し、Pyriteのテーマとスタイルを引き継ぐ。
+                MaterialTheme(
+                    colorScheme = MaterialTheme.colorScheme.copy(
+                        error = colorScheme.error,
+                        onError = colorScheme.onError,
+                        errorContainer = colorScheme.errorContainer,
+                        onErrorContainer = colorScheme.onErrorContainer
+                    ),
+                    typography = MaterialTheme.typography,
+                    shapes = MaterialTheme.shapes,
+                    motionScheme = MaterialTheme.motionScheme,
+                    content = cards
+                )
+            }
         }
     }
 }

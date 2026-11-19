@@ -1,5 +1,7 @@
 package jp.linkserver.nittcsc.sync
 
+import jp.linkserver.nittcsc.data.CURRENT_SYNC_PROTOCOL_VERSION
+import jp.linkserver.nittcsc.data.syncProtocolVersionOrLegacy
 import org.json.JSONObject
 import java.security.MessageDigest
 
@@ -69,6 +71,15 @@ internal data class CloudRemoteSnapshot(
     val syncPayload: JSONObject?,
     val commitId: String?
 )
+
+/**
+ * 旧プロトコルで書かれた syncPayload は差分マージに使えず、そのままだと毎回失敗して同期が止まる。
+ * 破棄して、全体バックアップ（payload）によるスナップショット同期（新しい方が勝つ）に切り替える。
+ */
+internal fun CloudRemoteSnapshot.withoutIncompatibleSyncPayload(): CloudRemoteSnapshot {
+    val sync = syncPayload ?: return this
+    return if (sync.syncProtocolVersionOrLegacy() == CURRENT_SYNC_PROTOCOL_VERSION) this else copy(syncPayload = null)
+}
 
 internal fun buildCloudEnvelope(
     updatedAt: Long,

@@ -1,6 +1,8 @@
 package jp.linkserver.nittcsc.ui
 
 import android.graphics.Bitmap
+import androidx.activity.OnBackPressedDispatcher
+import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -14,6 +16,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertHasNoClickAction
 import androidx.compose.ui.test.assertHeightIsAtLeast
@@ -74,8 +79,13 @@ class SettingsScreenDesignTest(
                             termEnd = LocalDate.now().plusMonths(3)
                         ))
                     }
+                    var timetableSettingsPage by remember {
+                        mutableStateOf<TimetableSettingsPage?>(null)
+                    }
                     SettingsScreen(
                         state = SchedulerUiState(settings = settings, uiDesignMode = mode),
+                        timetableSettingsPage = timetableSettingsPage,
+                        onTimetableSettingsPageChange = { timetableSettingsPage = it },
                         onBack = { backCount++ },
                         onAbout = {},
                         onToggleLocalAi = {},
@@ -96,14 +106,30 @@ class SettingsScreenDesignTest(
         composeRule.onNodeWithContentDescription(label(R.string.cd_back))
             .assertHasClickAction().assertTouchHeightIsEqualTo(48.dp)
         capture("top")
-        val timeEditorLabel = if (mode == UiDesignMode.MATERIAL_3_EXPRESSIVE) {
+        if (mode == UiDesignMode.MATERIAL_3_EXPRESSIVE) {
             composeRule.onNodeWithText(label(R.string.section_timetable_settings)).assertHasNoClickAction()
-            label(R.string.settings_timetable_time_editor_title)
+            val lessonTitle = label(R.string.settings_timetable_time_editor_title)
+            val examTitle = label(R.string.settings_exam_time_editor_title)
+            val specialTitle = label(R.string.special_timetable_settings_title)
+            composeRule.onNodeWithText(lessonTitle).performScrollTo().assertHasClickAction().performClick()
+            composeRule.onNodeWithText(label(R.string.label_koshi_notation)).assertIsDisplayed()
+            capture("lesson")
+            composeRule.onNodeWithContentDescription(label(R.string.cd_back)).performClick()
+
+            composeRule.onNodeWithText(examTitle).performScrollTo().assertHasClickAction().performClick()
+            composeRule.onNodeWithText(label(R.string.label_exam_arrival_time)).assertIsDisplayed()
+            capture("exam")
+            composeRule.onNodeWithContentDescription(label(R.string.cd_back)).performClick()
+
+            composeRule.onNodeWithText(specialTitle).performScrollTo().assertHasClickAction().performClick()
+            composeRule.onNodeWithText(label(R.string.label_semester_timetables)).assertIsDisplayed()
+            capture("special")
+            composeRule.onNodeWithContentDescription(label(R.string.cd_back)).performClick()
         } else {
-            label(R.string.section_timetable_settings)
+            composeRule.onNodeWithText(label(R.string.section_timetable_settings))
+                .performScrollTo().performClick()
+            capture("collapsed")
         }
-        composeRule.onNodeWithText(timeEditorLabel).performScrollTo().performClick()
-        capture("collapsed")
         composeRule.onNodeWithText(label(R.string.label_show_current_time_marker)).performScrollTo()
         if (mode == UiDesignMode.MATERIAL_3_EXPRESSIVE) {
             composeRule.onNodeWithText(label(R.string.label_show_current_time_marker))
@@ -114,6 +140,12 @@ class SettingsScreenDesignTest(
         composeRule.onNodeWithText(label(R.string.label_ui_design)).performScrollTo().performClick()
         composeRule.onNodeWithText(label(R.string.dialog_ui_design_title)).assertIsDisplayed()
         composeRule.onNodeWithText(label(R.string.btn_close)).performClick()
+        composeRule.onNodeWithText(label(R.string.btn_export_json)).performScrollTo().assertHasClickAction()
+        val export = composeRule.onNodeWithText(label(R.string.btn_export_json)).fetchSemanticsNode().boundsInRoot
+        val import = composeRule.onNodeWithText(label(R.string.btn_import_json)).assertHasClickAction().fetchSemanticsNode().boundsInRoot
+        assertEquals(export.width, import.width, 1f)
+        assertEquals(export.top, import.top, 1f)
+        org.junit.Assert.assertTrue(export.right < import.left)
         composeRule.onNodeWithContentDescription(label(R.string.cd_back)).performClick()
         composeRule.runOnIdle { assertEquals(1, backCount) }
     }
@@ -126,6 +158,71 @@ class SettingsScreenDesignTest(
         }
     }
 
+    @Test
+    fun lessonNotificationToggleAndDetailsAreIndependentAndBackReturnsToSettings() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val title = context.getString(R.string.label_lesson_start_notification)
+        val timing = context.getString(R.string.label_lesson_start_notification_minutes)
+        var toggleCount = 0
+        var exitCount = 0
+        var backDispatcher: OnBackPressedDispatcher? = null
+        composeRule.setContent {
+            backDispatcher = LocalOnBackPressedDispatcherOwner.current?.onBackPressedDispatcher
+            AppTheme(mode, darkTheme = dark, dynamicColor = dynamic) {
+                val density = LocalDensity.current
+                CompositionLocalProvider(LocalDensity provides Density(density.density, fontScale)) {
+                    var settings by remember {
+                        mutableStateOf(SettingsEntity(
+                            termStart = LocalDate.now(),
+                            termEnd = LocalDate.now().plusMonths(3),
+                            lessonStartNotificationEnabled = false
+                        ))
+                    }
+                    SettingsScreen(
+                        state = SchedulerUiState(settings = settings, uiDesignMode = mode),
+                        onBack = { exitCount++ },
+                        onAbout = {},
+                        onToggleLocalAi = {},
+                        onToggleDrawerNavigation = {},
+                        onToggleAddTasksToCalendar = {},
+                        onToggleCurrentTimeMarker = {},
+                        onToggleUnifyTaskPlanView = {},
+                        onToggleShowWeekdayOnDates = {},
+                        onToggleAdvancedTimeSettingsUi = {},
+                        onToggleLessonStartNotifications = {
+                            toggleCount++
+                            settings = settings.copy(lessonStartNotificationEnabled = it)
+                        }
+                    )
+                }
+            }
+        }
+
+        // オフのまま左側から詳細へ進み、ツールバーの戻るで一覧へ戻る。
+        composeRule.onNodeWithText(title).performScrollTo().performClick()
+        composeRule.onNodeWithText(context.getString(R.string.section_notification_settings)).assertDoesNotExist()
+        if (mode == UiDesignMode.MATERIAL_3_EXPRESSIVE) {
+            composeRule.onNodeWithText(timing).performScrollTo().assertIsNotEnabled()
+        } else {
+            composeRule.onNodeWithText(timing).assertDoesNotExist()
+        }
+        composeRule.onNodeWithContentDescription(context.getString(R.string.cd_back)).performClick()
+        composeRule.onNodeWithContentDescription(title).assertIsOff()
+        composeRule.runOnIdle { assertEquals(0, toggleCount); assertEquals(0, exitCount) }
+
+        // 右側のトグルは詳細を開かずに切り替わる。
+        composeRule.onNodeWithContentDescription(title).performClick().assertIsOn()
+        composeRule.onNodeWithText(timing).assertDoesNotExist()
+        composeRule.runOnIdle { assertEquals(1, toggleCount) }
+
+        composeRule.onNodeWithText(title).performClick()
+        composeRule.onNodeWithText(timing).performScrollTo().assertIsDisplayed()
+        composeRule.runOnIdle { checkNotNull(backDispatcher).onBackPressed() }
+        composeRule.onNodeWithContentDescription(title).assertIsOn()
+        composeRule.onNodeWithText(timing).assertDoesNotExist()
+        composeRule.runOnIdle { assertEquals(1, toggleCount); assertEquals(0, exitCount) }
+    }
+
     companion object {
         @JvmStatic @Parameterized.Parameters(name = "{0}, dark={1}, dynamic={2}, font={3}")
         fun cases(): List<Array<Any>> = listOf(
@@ -135,13 +232,46 @@ class SettingsScreenDesignTest(
             arrayOf(UiDesignMode.MATERIAL_3_EXPRESSIVE, true, true, 1f),
             arrayOf(UiDesignMode.MATERIAL_3_EXPRESSIVE, true, true, 1.8f),
             arrayOf(UiDesignMode.MATERIAL_3, false, false, 1f),
-            arrayOf(UiDesignMode.MATERIAL_3, true, false, 1f)
+            arrayOf(UiDesignMode.MATERIAL_3, true, false, 1f),
+            arrayOf(UiDesignMode.MATERIAL_3, false, false, 1.8f)
         )
     }
 }
 
 class SettingsItemInteractionTest {
     @get:Rule val composeRule = createComposeRule()
+
+    @Test
+    fun numberEditorOnlySavesConfirmedDraftAndListHasNoTextFields() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        var changes = 0
+        var saved = "90"
+        composeRule.setContent {
+            AppTheme(UiDesignMode.MATERIAL_3_EXPRESSIVE) {
+                var value by remember { mutableStateOf("90") }
+                NumberSettingRow("授業時間", value, "分", {
+                    changes++
+                    saved = it
+                    value = it
+                })
+            }
+        }
+        composeRule.onAllNodes(hasSetTextAction()).assertCountEquals(0)
+        composeRule.onNodeWithText("授業時間").performClick()
+        composeRule.onNode(hasSetTextAction()).performTextReplacement("75")
+        composeRule.runOnIdle { assertEquals(0, changes) }
+        composeRule.onNodeWithText(context.getString(R.string.btn_cancel)).performClick()
+        composeRule.onNodeWithText("90分").assertIsDisplayed()
+        composeRule.onNodeWithText("授業時間").performClick()
+        composeRule.onNode(hasSetTextAction()).performTextReplacement("80")
+        composeRule.onNodeWithText(context.getString(R.string.btn_save)).performClick()
+        composeRule.onNodeWithText("80分").assertIsDisplayed()
+        composeRule.onAllNodes(hasSetTextAction()).assertCountEquals(0)
+        composeRule.runOnIdle {
+            assertEquals(1, changes)
+            assertEquals("80", saved)
+        }
+    }
 
     @Test
     fun notificationDetailsStayReachableWhenConditionalRowsChange() {
@@ -178,13 +308,24 @@ class SettingsItemInteractionTest {
             }
         }
         composeRule.onNodeWithText(context.getString(R.string.label_lesson_start_notification)).performClick()
-        composeRule.onNodeWithText(context.getString(R.string.label_lesson_start_live_update_display_details))
+        composeRule.onNodeWithText(context.getString(R.string.label_lesson_start_live_update_display_details)).assertDoesNotExist()
+        composeRule.onNodeWithText(context.getString(R.string.label_lesson_start_progress_direction))
             .performScrollTo().performClick()
         composeRule.onNodeWithText(context.getString(R.string.label_lesson_start_progress_decreasing))
-            .performScrollTo().performClick()
+            .performClick()
         composeRule.runOnIdle { assertEquals(1, directionChanges) }
         composeRule.onNodeWithText(context.getString(R.string.label_lesson_start_notification))
             .performScrollTo().performClick().assertIsOff()
+        composeRule.onNodeWithText(context.getString(R.string.label_lesson_start_notification_minutes))
+            .performScrollTo().assertIsNotEnabled()
+        composeRule.onNodeWithText(context.getString(R.string.label_lesson_start_live_updates))
+            .performScrollTo().assertIsNotEnabled()
+        composeRule.onNodeWithText(context.getString(R.string.label_lesson_start_progress_direction)).assertDoesNotExist()
+        composeRule.onNodeWithText(context.getString(R.string.label_lesson_start_notification))
+            .performScrollTo().performClick().assertIsOn()
+        composeRule.onNodeWithText(context.getString(R.string.label_lesson_start_progress_decreasing))
+            .performScrollTo().assertIsDisplayed()
+        composeRule.runOnIdle { assertEquals(1, directionChanges) }
     }
 
     @Test
@@ -216,7 +357,7 @@ class SettingsItemInteractionTest {
                 }
             }
         }
-        composeRule.onNodeWithText("自動修正").assertHeightIsAtLeast(80.dp).performClick().assertIsOn()
+        composeRule.onNodeWithText("自動修正").assertHeightIsAtLeast(72.dp).performClick().assertIsOn()
         // Tap where the standard Switch thumb is rendered; the parent must fire only once.
         composeRule.onNodeWithText("自動修正").performTouchInput {
             click(androidx.compose.ui.geometry.Offset(width - 40.dp.toPx(), centerY))

@@ -135,7 +135,7 @@ class PlanReminderWorker(
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
             val notification = NotificationCompat.Builder(context, CHANNEL_ID)
-                .setSmallIcon(R.mipmap.ic_launcher)
+                .setSmallIcon(R.drawable.ic_notification_assignment)
                 .setContentTitle(context.getString(R.string.plan_reminder_notification_title))
                 .setContentText(context.getString(R.string.plan_reminder_notification_body, plan.title))
                 .setStyle(NotificationCompat.BigTextStyle().bigText(buildReminderBody(context, plan)))

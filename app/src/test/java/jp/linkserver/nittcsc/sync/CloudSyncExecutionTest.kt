@@ -185,4 +185,16 @@ class CloudSyncExecutionTest {
         assertEquals(0L, state.lastSuccessAt)
         assertFalse(state.lastFailed)
     }
+
+    @Test
+    fun incompatibleSyncPayloadIsDroppedSoSnapshotSyncCanContinue() {
+        val old = CloudRemoteSnapshot(1L, "d", "{}", org.json.JSONObject().put("syncProtocolVersion", 1), "c")
+        assertNull(old.withoutIncompatibleSyncPayload().syncPayload)
+        val current = CloudRemoteSnapshot(
+            1L, "d", "{}",
+            org.json.JSONObject().put("syncProtocolVersion", jp.linkserver.nittcsc.data.CURRENT_SYNC_PROTOCOL_VERSION),
+            "c"
+        )
+        assertTrue(current.withoutIncompatibleSyncPayload().syncPayload != null)
+    }
 }

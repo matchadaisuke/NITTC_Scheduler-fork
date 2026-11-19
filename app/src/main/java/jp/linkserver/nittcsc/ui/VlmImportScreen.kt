@@ -1,5 +1,10 @@
 package jp.linkserver.nittcsc.ui
 
+import jp.linkserver.nittcsc.ui.theme.appDialogSectionColor
+import jp.linkserver.nittcsc.ui.theme.LocalUiDesignMode
+import jp.linkserver.nittcsc.data.UiDesignMode
+import jp.linkserver.nittcsc.ui.theme.appInsetContainerColor
+import jp.linkserver.nittcsc.ui.theme.appCardContainerColor
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.result.PickVisualMediaRequest
@@ -32,15 +37,18 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.work.ExistingWorkPolicy
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import jp.linkserver.nittcsc.ml.*
 import jp.linkserver.nittcsc.data.*
 import jp.linkserver.nittcsc.logic.LessonKey
+import jp.linkserver.nittcsc.logic.LessonAutocompleteOptions
 import jp.linkserver.nittcsc.logic.TimetableTerm
 import jp.linkserver.nittcsc.logic.academicYearForDate
 import jp.linkserver.nittcsc.viewmodel.SchedulerUiState
+import jp.linkserver.nittcsc.viewmodel.AiRuntimeViewModel
 import jp.linkserver.nittcsc.ui.components.AppLoadingIndicator
 import jp.linkserver.nittcsc.ui.components.AppProgressIndicator
 import kotlinx.coroutines.Job
@@ -279,6 +287,7 @@ class VlmDownloadViewModel(application: Application) : AndroidViewModel(applicat
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun VlmImportScreen(
+    lessonAutocompleteOptions: LessonAutocompleteOptions,
     hfToken: String?,
     onUpdateHfToken: (String?) -> Unit,
     onBack: () -> Unit,
@@ -287,9 +296,13 @@ fun VlmImportScreen(
     existingLessons: Map<LessonKey, LessonEntity> = emptyMap(),
     existingDayTypeMap: Map<java.time.LocalDate, jp.linkserver.nittcsc.data.DayType> = emptyMap(),
     state: SchedulerUiState? = null,
-    downloadViewModel: VlmDownloadViewModel = viewModel()
+    downloadViewModel: VlmDownloadViewModel = viewModel(),
+    runtimeViewModel: AiRuntimeViewModel = viewModel()
 ) {
     val context = LocalContext.current
+    val runtimeState by runtimeViewModel.state.collectAsStateWithLifecycle()
+    val runtimeRequiredMessage = stringResource(R.string.ai_runtime_required)
+    val currentLessonAutocompleteOptions by rememberUpdatedState(lessonAutocompleteOptions)
     val downloadManager = remember { ModelDownloadManager(context) }
     val coroutineScope = rememberCoroutineScope()
     val activeAcademicYear = state?.settings?.activeAcademicYear
@@ -363,6 +376,10 @@ fun VlmImportScreen(
     }
 
     fun parseImage(uri: Uri, isAbTable: Boolean) {
+        if (!runtimeState.canInfer) {
+            inferenceResult = runtimeRequiredMessage
+            return
+        }
         val modelToUse = activeModelFile ?: recognizedModels.firstOrNull()?.let { File(context.filesDir, "models/$it") }
         if (modelToUse == null) {
             inferenceResult = "エラー: ローカルモデルが選択されていません。モデルをダウンロードしてください。"
@@ -425,7 +442,9 @@ fun VlmImportScreen(
                         parsedLessons = emptyList()
                     } catch (e: Exception) { e.printStackTrace() }
                 } else {
-                    parsedLessons = inferenceEngine.parseLessonsFromJson(jsonOutput)
+                    parsedLessons = inferenceEngine.parseLessonsFromJson(jsonOutput).map { lesson ->
+                        lesson.copy(draft = currentLessonAutocompleteOptions.resolveDraftTeachersForAutoFill(lesson.draft))
+                    }
                     parsedAbTable = emptyMap()
                 }
             } catch (e: Exception) {
@@ -563,11 +582,14 @@ fun VlmImportScreen(
                 modifier = Modifier.fillMaxSize().padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
+            item(key = "ai-runtime") {
+                AiRuntimeCard(runtimeState, runtimeViewModel::download, runtimeViewModel::cancelDownload)
+            }
             if (downloadedModelFiles.isNotEmpty()) {
                 item {
                     Card(
                         modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
+                        colors = CardDefaults.cardColors(containerColor = appCardContainerColor(standardColor = MaterialTheme.colorScheme.surfaceContainerLow))
                     ) {
                         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             Text(stringResource(R.string.title_ai_center), style = MaterialTheme.typography.titleMedium)
@@ -580,6 +602,8 @@ fun VlmImportScreen(
                                 OutlinedCard(
                                     modifier = Modifier.fillMaxWidth(),
                                     onClick = { if (recognizedModels.size > 1) showModelMenu = true },
+                                    colors = CardDefaults.outlinedCardColors(containerColor = appInsetContainerColor(
+                                        standardColor = CardDefaults.outlinedCardColors().containerColor)),
                                 ) {
                                     Row(
                                         modifier = Modifier.padding(12.dp),
@@ -635,7 +659,9 @@ fun VlmImportScreen(
                             Box {
                                 OutlinedCard(
                                     modifier = Modifier.fillMaxWidth(),
-                                    onClick = { if (recognizedModels.isNotEmpty()) showJsonCorrectionModelMenu = true }
+                                    onClick = { if (recognizedModels.isNotEmpty()) showJsonCorrectionModelMenu = true },
+                                    colors = CardDefaults.outlinedCardColors(containerColor = appInsetContainerColor(
+                                        standardColor = CardDefaults.outlinedCardColors().containerColor))
                                 ) {
                                     Row(
                                         modifier = Modifier.padding(12.dp),
@@ -709,6 +735,7 @@ fun VlmImportScreen(
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Button(
                                     modifier = Modifier.weight(1f),
+                                    enabled = runtimeState.canInfer && !isParsing,
                                     onClick = { 
                                         isPendingAbMode = false 
                                         showSelectionDialog = true
@@ -720,6 +747,7 @@ fun VlmImportScreen(
                                 }
                                 Button(
                                     modifier = Modifier.weight(1f),
+                                    enabled = runtimeState.canInfer && !isParsing,
                                     onClick = { 
                                         isPendingAbMode = true
                                         showSelectionDialog = true
@@ -780,7 +808,7 @@ fun VlmImportScreen(
                         
                         Card(
                             modifier = Modifier.fillMaxWidth(),
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)
+                            colors = CardDefaults.cardColors(containerColor = appInsetContainerColor(standardColor = MaterialTheme.colorScheme.surfaceContainerHigh))
                         ) {
                             Row(
                                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
@@ -820,7 +848,7 @@ fun VlmImportScreen(
                     Card(
                         modifier = Modifier.fillMaxWidth(),
                         onClick = { expandedFamilies[family] = !isExpanded },
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
+                        colors = CardDefaults.cardColors(containerColor = appCardContainerColor(standardColor = MaterialTheme.colorScheme.surfaceContainerLow))
                     ) {
                         Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                             Text(family, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
@@ -838,7 +866,7 @@ fun VlmImportScreen(
                         
                         Card(
                             modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
+                            colors = CardDefaults.cardColors(containerColor = appCardContainerColor(standardColor = MaterialTheme.colorScheme.surfaceContainerLow))
                         ) {
                             Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Text(model.name, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
@@ -916,12 +944,15 @@ fun VlmImportScreen(
 
             if (unknownModels.isNotEmpty()) {
                 item {
+                    val warningContentColor = if (LocalUiDesignMode.current == UiDesignMode.MATERIAL_3_EXPRESSIVE) {
+                        MaterialTheme.colorScheme.onErrorContainer
+                    } else MaterialTheme.colorScheme.error
                     Card(
                         modifier = Modifier.fillMaxWidth(),
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
                     ) {
                         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text(stringResource(R.string.msg_old_models_title), fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.error)
+                            Text(stringResource(R.string.msg_old_models_title), fontWeight = FontWeight.Bold, color = warningContentColor)
                             Text(stringResource(R.string.msg_old_models_desc), style = MaterialTheme.typography.bodySmall)
                             
                             unknownModels.forEach { fileName ->
@@ -936,7 +967,7 @@ fun VlmImportScreen(
                                         downloadedModelFiles = downloadManager.getDownloadedModels()
                                         if (activeModelFile?.name == fileName) activeModelFile = null
                                     }) {
-                                        Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.btn_delete), tint = MaterialTheme.colorScheme.error)
+                                        Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.btn_delete), tint = warningContentColor)
                                     }
                                 }
                             }
@@ -1216,7 +1247,7 @@ fun VlmImportScreen(
                                 color = if (downloadProgressDisplayMode == mode) {
                                     MaterialTheme.colorScheme.secondaryContainer
                                 } else {
-                                    MaterialTheme.colorScheme.surfaceContainerLow
+                                    appDialogSectionColor(standardColor = MaterialTheme.colorScheme.surfaceContainerLow)
                                 },
                                 onClick = {
                                     downloadProgressDisplayMode = mode

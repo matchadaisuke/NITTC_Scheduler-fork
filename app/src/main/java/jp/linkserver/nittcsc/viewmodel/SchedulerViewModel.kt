@@ -47,6 +47,11 @@ import jp.linkserver.nittcsc.sync.PreparedSyncSession
 import jp.linkserver.nittcsc.sync.SyncChoice
 import jp.linkserver.nittcsc.sync.SyncDiagnostics
 import jp.linkserver.nittcsc.sync.SyncResult
+import jp.linkserver.goldy.CheckOutcome
+import jp.linkserver.nittcsc.update.AppUpdates
+import jp.linkserver.goldy.GoldyState
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -120,15 +125,46 @@ data class SchedulerUiState(
     val syncDiagnostics: SyncDiagnostics = SyncDiagnostics(),
     val uiDesignMode: UiDesignMode = UiDesignMode.MATERIAL_3,
     val appThemeMode: AppThemeMode = AppThemeMode.SYSTEM,
-    val expressiveWarningAcknowledged: Boolean = false
+    val expressiveWarningAcknowledged: Boolean = false,
+    val appUpdate: GoldyState = GoldyState()
 )
 
 class SchedulerViewModel(
     private val repository: SchedulerRepository,
     private val syncManager: LocalSyncManager? = null,
     val nearbySyncManager: NearbySyncManager? = null,
+    private val appUpdates: AppUpdates? = null,
     nearbyStandbyEnabledInitially: Boolean = true
 ) : ViewModel() {
+
+    private var syncServicesStarted = false
+    private var updateCheckJob: Job? = null
+
+    fun checkForAppUpdates() {
+        val updates = appUpdates ?: return
+        if (updateCheckJob?.isActive == true) return
+        updateCheckJob = viewModelScope.launch { updates.check() }
+    }
+
+    suspend fun checkForAppUpdatesManually(): CheckOutcome {
+        return appUpdates?.check(force = true) ?: CheckOutcome.Disabled
+    }
+
+    fun hideUpdateBanner() = appUpdates?.hideBanner()
+
+    fun ignoreUpdateVersion(tagName: String) = appUpdates?.ignoreVersion(tagName)
+
+    private suspend fun startSyncServicesIfReady() {
+        if (syncServicesStarted || repository.hasPendingLegacyTimetableSelection()) return
+        syncManager?.initialize()
+        syncServicesStarted = true
+        // フォーク拡張: Nearbyの自動案内を抑制する設定のときは、待機広告を始めない。
+        if (!nearbyStandbyEnabled) return
+        val manager = nearbySyncManager ?: return
+        val profile = syncManager?.getProfile()
+        manager.setLocalName(profile?.deviceName ?: android.os.Build.MODEL)
+        manager.startStandbyAdvertising()
+    }
 
     private val selectedDayOfWeek = MutableStateFlow(DayOfWeek.MONDAY.value)
     private val selectedResultDate = MutableStateFlow(LocalDate.now())
@@ -265,6 +301,8 @@ class SchedulerViewModel(
             appThemeMode = syncAndDesign.appThemeMode,
             expressiveWarningAcknowledged = syncAndDesign.expressiveWarningAcknowledged
         )
+    }.combine(appUpdates?.state ?: MutableStateFlow(GoldyState())) { state, update ->
+        state.copy(appUpdate = update)
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000),
@@ -277,15 +315,9 @@ class SchedulerViewModel(
     init {
         viewModelScope.launch {
             repository.initialize()
-            syncManager?.initialize()
+            startSyncServicesIfReady()
             initialized.value = true
 
-            // アプリ起動後、Nearbyアドバタイズをスタンバイ開始（相手から見つけられるようにする）
-            if (!nearbyStandbyEnabled) return@launch
-            val manager = nearbySyncManager ?: return@launch
-            val profile = syncManager?.getProfile()
-            manager.setLocalName(profile?.deviceName ?: android.os.Build.MODEL)
-            manager.startStandbyAdvertising()
         }
         // Wi-Fi同期受信時にSnackbarで通知
         syncManager?.let { mgr ->
@@ -357,8 +389,15 @@ class SchedulerViewModel(
     fun runAutoSync() {
         val manager = syncManager ?: return
         viewModelScope.launch {
+            if (repository.hasPendingLegacyTimetableSelection()) return@launch
             manager.runAutoSync()
         }
+    }
+
+    suspend fun assignLegacyTimetableTo(term: TimetableTerm): Boolean {
+        val assigned = repository.assignLegacyTimetableTo(term)
+        if (assigned) startSyncServicesIfReady()
+        return assigned
     }
 
     fun saveSyncProfile(userNickname: String, deviceName: String, password: String, autoSyncEnabled: Boolean, conflictAutoNewerFirst: Boolean = false) {
@@ -606,8 +645,16 @@ class SchedulerViewModel(
         launchRepositoryUpdate { repository.toggleDrawerNavigation(enabled) }
     }
 
+    fun toggleShowSyncButton(enabled: Boolean) {
+        launchRepositoryUpdate { repository.toggleShowSyncButton(enabled) }
+    }
+
     fun toggleSemesterTimetables(enabled: Boolean) {
         launchRepositoryUpdate { repository.toggleSemesterTimetables(enabled) }
+    }
+
+    fun updateSecondTermStart(month: Int, day: Int) {
+        launchRepositoryUpdate { repository.updateSecondTermStart(month, day) }
     }
 
     fun updateUiDesignMode(mode: UiDesignMode) {
@@ -824,7 +871,9 @@ class SchedulerViewModel(
         dayTypeMap: Map<LocalDate, DayType>,
         dayTypeEntities: Map<LocalDate, DayTypeEntity> = emptyMap(),
         changedLessons: Map<Pair<LocalDate, Int>, ChangedLessonEntity> = emptyMap(),
-        semesterTimetablesEnabled: Boolean = false
+        semesterTimetablesEnabled: Boolean = false,
+        secondTermStartMonth: Int = 10,
+        secondTermStartDay: Int = 1
     ): ResolvedLesson? {
         if (date.dayOfWeek == DayOfWeek.SUNDAY) return null
         val dayTypeEntity = dayTypeEntities[date]
@@ -837,7 +886,9 @@ class SchedulerViewModel(
                 lessons,
                 dayTypeMap,
                 dayTypeEntities,
-                semesterTimetablesEnabled
+                semesterTimetablesEnabled,
+                secondTermStartMonth,
+                secondTermStartDay
             ),
             changedLesson = changedLessons[date to slotIndex]
         )
@@ -849,7 +900,9 @@ class SchedulerViewModel(
         lessons: Map<LessonKey, LessonEntity>,
         dayTypeMap: Map<LocalDate, DayType>,
         dayTypeEntities: Map<LocalDate, DayTypeEntity> = emptyMap(),
-        semesterTimetablesEnabled: Boolean = false
+        semesterTimetablesEnabled: Boolean = false,
+        secondTermStartMonth: Int = 10,
+        secondTermStartDay: Int = 1
     ): ResolvedLesson? {
         if (date.dayOfWeek == DayOfWeek.SUNDAY) return null
 
@@ -859,7 +912,9 @@ class SchedulerViewModel(
 
         val lessonDayOfWeek = dayTypeEntity?.overrideLessonDayOfWeek ?: date.dayOfWeek.value
         val lessonDayType = dayTypeEntity?.overrideLessonDayType ?: dayType
-        val timetableTerm = timetableTermForDate(date, semesterTimetablesEnabled)
+        val timetableTerm = timetableTermForDate(
+            date, semesterTimetablesEnabled, secondTermStartMonth, secondTermStartDay
+        )
         val lesson = lessons[
             LessonKey(academicYearForDate(date), timetableTerm, lessonDayOfWeek, slotIndex)
         ] ?: return null
@@ -952,6 +1007,22 @@ class SchedulerViewModel(
 
     suspend fun exportAllData(): String = repository.exportAllData()
 
+    suspend fun exportQrShare(selection: jp.linkserver.nittcsc.data.QrShareSelection) =
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { repository.exportQrShare(selection) }
+
+    suspend fun importQrShare(
+        context: android.content.Context, payload: jp.linkserver.nittcsc.data.QrSharePayload,
+        approvedNoteReplacements: Set<LessonNoteEntity> = emptySet()
+    ): jp.linkserver.nittcsc.data.QrShareImportResult {
+        val appContext = context.applicationContext
+        // 保存後の通知・カレンダー更新は画面を離れても完了させる。
+        return viewModelScope.async(kotlinx.coroutines.Dispatchers.IO) {
+            val imported = repository.importQrShare(payload, approvedNoteReplacements)
+            val failed = jp.linkserver.nittcsc.qr.updateQrShareIntegrations(appContext, repository, imported)
+            jp.linkserver.nittcsc.data.QrShareImportResult(imported.summary, failed)
+        }.await()
+    }
+
     suspend fun completeInitialSetup(draft: InitialSetupDraft) = repository.completeInitialSetup(draft)
 
     suspend fun restoreInitialSetup(json: String) = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
@@ -1040,6 +1111,7 @@ class SchedulerViewModelFactory(
     private val repository: SchedulerRepository,
     private val syncManager: LocalSyncManager? = null,
     private val nearbySyncManager: NearbySyncManager? = null,
+    private val appUpdates: AppUpdates? = null,
     private val nearbyStandbyEnabledInitially: Boolean = true
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
@@ -1049,6 +1121,7 @@ class SchedulerViewModelFactory(
                 repository,
                 syncManager,
                 nearbySyncManager,
+                appUpdates,
                 nearbyStandbyEnabledInitially
             ) as T
         }

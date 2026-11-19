@@ -4,7 +4,6 @@ import jp.linkserver.nittcsc.InternalFeatureFlags
 import jp.linkserver.nittcsc.logic.CLASS_SLOTS
 import jp.linkserver.nittcsc.logic.InitialSetupDraft
 import jp.linkserver.nittcsc.logic.forTimetable
-import jp.linkserver.nittcsc.data.HolidaySpecialLabel
 import jp.linkserver.nittcsc.logic.ExportRange
 import jp.linkserver.nittcsc.logic.GeneratedLesson
 import jp.linkserver.nittcsc.logic.JapaneseHolidayCalculator
@@ -38,7 +37,7 @@ class SchedulerRepository(
     private val dataTransfer = SchedulerDataTransfer(this, db)
 
     companion object {
-        private const val CURRENT_EXPORT_VERSION = 16
+        private const val CURRENT_EXPORT_VERSION = 18
         private const val MIN_SUPPORTED_IMPORT_VERSION = 1
         private const val MAX_FUTURE_META_DRIFT_MS = 5 * 60 * 1000L
         const val DATASET_TASKS = "tasks"
@@ -105,7 +104,7 @@ class SchedulerRepository(
                     termStart = academicYearStart(academicYear),
                     termEnd = academicYearEnd(academicYear)
                 )
-                touchSyncDatasetMeta(DATASET_LESSONS, DATASET_DAY_TYPES)
+                touchSyncDatasetMeta(DATASET_DAY_TYPES)
             }
             if (
                 !InternalFeatureFlags.NATURAL_LANGUAGE_TASK_ADD &&
@@ -113,8 +112,22 @@ class SchedulerRepository(
             ) {
                 settings = settings.copy(enableNaturalLanguageTaskAdd = false)
             }
+            if (!InternalFeatureFlags.INITIAL_SETUP && !settings.initialSetupCompleted) {
+                settings = settings.copy(initialSetupCompleted = true)
+            }
+            if (!InternalFeatureFlags.SPECIAL_TIMETABLE_TOGGLES &&
+                (!settings.enableAbTimetable || !settings.enableExamTimetable)
+            ) {
+                settings = settings.copy(enableAbTimetable = true, enableExamTimetable = true)
+            }
             dao.upsertSettings(settings)
-            ensureLessonRows(settings.activeAcademicYear, TimetableTerm.entries.toSet())
+            if (ensureLessonRows(settings.activeAcademicYear, TimetableTerm.entries.toSet())) {
+                touchSyncDatasetMeta(
+                    *TimetableTerm.entries.map {
+                        LessonSyncPartition(settings.activeAcademicYear, it).datasetKey
+                    }.toTypedArray()
+                )
+            }
             syncDayTypes()
         }
     }
@@ -148,10 +161,47 @@ class SchedulerRepository(
             )
             syncDayTypes()
             if (advanced || rowsChanged) {
-                touchSyncDatasetMeta(DATASET_LESSONS, DATASET_DAY_TYPES)
+                touchSyncDatasetMeta(DATASET_DAY_TYPES)
+                if (rowsChanged) touchSyncDatasetMeta(
+                    *TimetableTerm.entries.map {
+                        LessonSyncPartition(settings.activeAcademicYear, it).datasetKey
+                    }.toTypedArray()
+                )
             }
             advanced
         }
+
+    suspend fun hasPendingLegacyTimetableSelection(): Boolean =
+        dao.getSettings()?.pendingLegacyTimetableYear != null
+
+    suspend fun assignLegacyTimetableTo(term: TimetableTerm): Boolean = db.withTransaction {
+        val settings = dao.getSettings() ?: return@withTransaction false
+        val academicYear = settings.pendingLegacyTimetableYear ?: return@withTransaction false
+        if (term == TimetableTerm.SECOND) {
+            val secondTerm = dao.getLessonsOnce().filter {
+                it.academicYear == academicYear && it.timetableTerm == TimetableTerm.SECOND
+            }
+            // 新しい学期に入力済みの授業がある場合は上書きしない。
+            if (secondTerm.any { it.hasEnteredLessonContent() }) return@withTransaction false
+            dao.deleteLessonsForPartition(academicYear, TimetableTerm.SECOND)
+            // 行の ID を保持し、既存の課題・予定との関連付けを維持する。
+            dao.moveFirstTermLessonsToSecond(academicYear)
+        }
+
+        ensureLessonRows(academicYear, TimetableTerm.entries.toSet())
+        dao.upsertSettings(settings.copy(pendingLegacyTimetableYear = null))
+        touchSyncDatasetMeta(
+            LessonSyncPartition(academicYear, TimetableTerm.FIRST).datasetKey,
+            LessonSyncPartition(academicYear, TimetableTerm.SECOND).datasetKey
+        )
+        true
+    }
+
+    private fun LessonEntity.hasEnteredLessonContent(): Boolean =
+        mode != LessonMode.WEEKLY ||
+            weeklySubject.isNotBlank() || weeklyTeacher.isNotBlank() || !weeklyLocation.isNullOrBlank() ||
+            aSubject.isNotBlank() || aTeacher.isNotBlank() || !aLocation.isNullOrBlank() ||
+            bSubject.isNotBlank() || bTeacher.isNotBlank() || !bLocation.isNullOrBlank()
 
     suspend fun prepareNextAcademicYear(today: LocalDate = LocalDate.now()): Boolean {
         refreshAcademicYear(today)
@@ -170,7 +220,10 @@ class SchedulerRepository(
             )
             syncDayTypes()
             if (rowsChanged) {
-                touchSyncDatasetMeta(DATASET_LESSONS, DATASET_DAY_TYPES)
+                touchSyncDatasetMeta(
+                    LessonSyncPartition(targetAcademicYear, TimetableTerm.FIRST).datasetKey,
+                    DATASET_DAY_TYPES
+                )
             }
             rowsChanged
         }
@@ -233,6 +286,7 @@ class SchedulerRepository(
                     periodLabelStyle = periodLabelStyle,
                     arrivalHour = arrivalHour,
                     arrivalMinute = arrivalMinute,
+                    arrivalTimeAuto = arrivalHour < 0,
                     departureHour = departureHour,
                     departureMinute = departureMinute
                 )
@@ -272,6 +326,16 @@ class SchedulerRepository(
             val current = dao.getSettings() ?: return@withTransaction
             dao.upsertSettings(current.copy(enableSemesterTimetables = enabled))
             ensureLessonRows()
+        }
+    }
+
+    suspend fun updateSecondTermStart(month: Int, day: Int) {
+        require(jp.linkserver.nittcsc.logic.validSecondTermStart(month, day))
+        db.withTransaction {
+            val current = dao.getSettings() ?: return@withTransaction
+            dao.upsertSettings(current.copy(secondTermStartMonth = month, secondTermStartDay = day))
+            syncDayTypes()
+            touchSyncDatasetMeta(DATASET_DAY_TYPES)
         }
     }
 
@@ -384,6 +448,11 @@ class SchedulerRepository(
     suspend fun toggleDrawerNavigation(enabled: Boolean) {
         val current = dao.getSettings() ?: return
         dao.upsertSettings(current.copy(useDrawerNavigation = enabled))
+    }
+
+    suspend fun toggleShowSyncButton(enabled: Boolean) {
+        val current = dao.getSettings() ?: return
+        dao.upsertSettings(current.copy(showSyncButton = enabled))
     }
 
     suspend fun updateUiDesignMode(mode: UiDesignMode) {
@@ -714,11 +783,19 @@ class SchedulerRepository(
 
     suspend fun updateHolidaySpecialLabel(date: LocalDate, label: HolidaySpecialLabel?) {
         db.withTransaction {
-            val existing = dao.getDayType(date) ?: DayTypeEntity(date = date, dayType = DayType.HOLIDAY)
+            val existing = dao.getDayType(date)
+            if (existing == null && label == null) return@withTransaction
             dao.upsertDayType(
-                existing.copy(
-                    holidaySpecialLabel = if (existing.dayType == DayType.HOLIDAY) label else null
-                )
+                if (label == null) {
+                    requireNotNull(existing).copy(holidaySpecialLabel = null)
+                } else {
+                    (existing ?: DayTypeEntity(date = date, dayType = DayType.HOLIDAY)).copy(
+                        dayType = DayType.HOLIDAY,
+                        overrideLessonDayOfWeek = null,
+                        overrideLessonDayType = null,
+                        holidaySpecialLabel = label
+                    )
+                }
             )
             touchSyncDatasetMeta(DATASET_DAY_TYPES)
         }
@@ -844,7 +921,7 @@ class SchedulerRepository(
                     aSubject = draft.weeklySubject.trim(), aTeacher = draft.weeklyTeacher.trim(),
                     aLocation = draft.weeklyLocation.trim().takeIf { it.isNotEmpty() }
                 ))
-                touchSyncDatasetMeta(DATASET_LESSONS)
+                touchSyncDatasetMeta(LessonSyncPartition(academicYear, timetableTerm).datasetKey)
                 return@withTransaction
             }
             val weeklySubject = draft.weeklySubject.trim()
@@ -875,7 +952,7 @@ class SchedulerRepository(
                     bLocation = if (draft.mode == LessonMode.ALTERNATING) bLocation else null
                 )
             )
-            touchSyncDatasetMeta(DATASET_LESSONS)
+            touchSyncDatasetMeta(LessonSyncPartition(academicYear, timetableTerm).datasetKey)
         }
     }
 
@@ -892,7 +969,9 @@ class SchedulerRepository(
         }
         val ranges = buildList {
             add(settings.termStart..settings.termEnd)
-            preparedNextAcademicYear?.let { add(firstSemesterRange(it)) }
+            preparedNextAcademicYear?.let {
+                add(firstSemesterRange(it, settings.secondTermStartMonth, settings.secondTermStartDay))
+            }
         }
 
         val rebuilt = mutableListOf<DayTypeEntity>()
@@ -929,10 +1008,8 @@ class SchedulerRepository(
         val examScheduleDates = dao.getExamDaySchedulesOnce()
             .map { it.date }
             .filterTo(mutableSetOf()) { date ->
-                settings.enableExamTimetable && examLessonsByDate[date].orEmpty().any { it.hasEnteredContent() } && when (dayTypeMap[date]?.holidaySpecialLabel) {
-                    HolidaySpecialLabel.MIDTERM, HolidaySpecialLabel.FINAL -> true
-                    else -> false
-                }
+                settings.enableExamTimetable && examLessonsByDate[date].orEmpty().any { it.hasEnteredContent() } &&
+                    dayTypeMap[date]?.holidaySpecialLabel?.usesExamTimetable == true
             }
 
         val dateBounds = when (range) {
@@ -994,7 +1071,10 @@ class SchedulerRepository(
                 )
                 for (slot in slots) {
                     if ((date to slot.index) in cancelledLessons) continue
-                    val timetableTerm = timetableTermForDate(date, settings.enableSemesterTimetables)
+                    val timetableTerm = timetableTermForDate(
+                        date, settings.enableSemesterTimetables,
+                        settings.secondTermStartMonth, settings.secondTermStartDay
+                    )
                     val lesson = lessons[
                         LessonKey(academicYearForDate(date), timetableTerm, dayKey, slot.index)
                     ] ?: continue
@@ -1096,7 +1176,9 @@ class SchedulerRepository(
         val settings = dao.getSettings()
         val timetableTerm = timetableTermForDate(
             date,
-            settings?.enableSemesterTimetables == true
+            settings?.enableSemesterTimetables == true,
+            settings?.secondTermStartMonth ?: 10,
+            settings?.secondTermStartDay ?: 1
         )
         val lesson = dao.getLesson(
             academicYearForDate(date),
@@ -1124,7 +1206,7 @@ class SchedulerRepository(
             termStart = LocalDate.of(fiscalStartYear, Month.APRIL, 1),
             termEnd = LocalDate.of(fiscalStartYear + 1, Month.MARCH, 31),
             activeAcademicYear = fiscalStartYear,
-            initialSetupCompleted = false,
+            initialSetupCompleted = !InternalFeatureFlags.INITIAL_SETUP,
             arrivalHour = 8,
             arrivalMinute = 30
         )
@@ -1149,8 +1231,15 @@ class SchedulerRepository(
         if (datasetKeys.isEmpty()) return
         val now = System.currentTimeMillis()
         val existingByKey = dao.getAllSyncDatasetMeta().associateBy { it.datasetKey }
+        val expandedKeys = datasetKeys.flatMap { key ->
+            if (key == DATASET_LESSONS) {
+                dao.getLessonsOnce().map { lesson ->
+                    LessonSyncPartition(lesson.academicYear, lesson.timetableTerm).datasetKey
+                }.distinct()
+            } else listOf(key)
+        }
         dao.upsertSyncDatasetMetaList(
-            datasetKeys.distinct().map { key ->
+            expandedKeys.distinct().map { key ->
                 val previous = existingByKey[key]?.lastUpdatedAt ?: 0L
                 SyncDatasetMetaEntity(
                     datasetKey = key,
@@ -1329,7 +1418,9 @@ class SchedulerRepository(
         val settings = dao.getSettings()
         val timetableTerm = timetableTermForDate(
             targetDate,
-            settings?.enableSemesterTimetables == true
+            settings?.enableSemesterTimetables == true,
+            settings?.secondTermStartMonth ?: 10,
+            settings?.secondTermStartDay ?: 1
         )
         val lesson = dao.getLesson(
             academicYearForDate(targetDate),
@@ -1610,10 +1701,16 @@ class SchedulerRepository(
 
     suspend fun exportAllData(): String = dataTransfer.exportAllData()
 
+    suspend fun exportQrShare(selection: QrShareSelection): QrSharePayload =
+        QrShareTransfer(this, db).export(selection)
+
+    suspend fun importQrShare(payload: QrSharePayload, approvedNoteReplacements: Set<LessonNoteEntity> = emptySet()): QrShareImportedData =
+        QrShareTransfer(this, db).import(payload, approvedNoteReplacements)
+
     suspend fun exportSyncPayload(): org.json.JSONObject = dataTransfer.exportSyncPayload()
 
     suspend fun applySyncPayload(payload: org.json.JSONObject) {
-        dataTransfer.applySyncPayload(payload)
+        db.withTransaction { dataTransfer.applySyncPayload(payload) }
     }
 
     suspend fun importAllData(json: String, requireSettings: Boolean = false) {

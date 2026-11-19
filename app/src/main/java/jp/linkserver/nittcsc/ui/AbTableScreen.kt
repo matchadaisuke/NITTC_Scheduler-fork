@@ -1,5 +1,7 @@
 package jp.linkserver.nittcsc.ui
 
+import jp.linkserver.nittcsc.ui.theme.appInsetContainerColor
+import jp.linkserver.nittcsc.ui.theme.appCardContainerColor
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -81,12 +83,18 @@ internal fun AbTableScreen(
     var showBreakDialog by remember { mutableStateOf(false) }
     var showPrepareNextAcademicYearDialog by rememberSaveable { mutableStateOf(false) }
 
-    val today = checkNotNull(rememberCurrentDateTime(enabled = true)).toLocalDate()
+    val today = rememberCurrentDate()
     val nextAcademicYearStart = remember(preparedNextAcademicYear) {
         preparedNextAcademicYear?.let { LocalDate.of(it, 4, 1) }
     }
-    val nextAcademicYearEnd = remember(preparedNextAcademicYear) {
-        preparedNextAcademicYear?.let { LocalDate.of(it, 9, 30) }
+    val nextAcademicYearEnd = remember(
+        preparedNextAcademicYear, settings.secondTermStartMonth, settings.secondTermStartDay
+    ) {
+        preparedNextAcademicYear?.let {
+            jp.linkserver.nittcsc.logic.firstSemesterEnd(
+                it, settings.secondTermStartMonth, settings.secondTermStartDay
+            )
+        }
     }
     val currentPeriodEnd = remember(settings.termEnd, nextAcademicYearStart) {
         nextAcademicYearStart?.let { minOf(settings.termEnd, it.minusDays(1)) } ?: settings.termEnd
@@ -197,7 +205,7 @@ internal fun AbTableScreen(
         ) {
 
         item {
-            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
+            Card(colors = CardDefaults.cardColors(containerColor = appCardContainerColor(standardColor = MaterialTheme.colorScheme.surfaceContainerLow))) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -212,7 +220,7 @@ internal fun AbTableScreen(
                         Text(stringResource(R.string.label_not_registered), color = MaterialTheme.colorScheme.onSurfaceVariant)
                     } else {
                         state.longBreaks.forEach { longBreak ->
-                            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+                            Card(colors = CardDefaults.cardColors(containerColor = appInsetContainerColor(standardColor = MaterialTheme.colorScheme.surface))) {
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -311,7 +319,7 @@ internal fun AbTableScreen(
         }
 
         item {
-            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
+            Card(colors = CardDefaults.cardColors(containerColor = appCardContainerColor(standardColor = MaterialTheme.colorScheme.surfaceContainerLow))) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(stringResource(R.string.label_period_settings), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     Text(
@@ -403,12 +411,15 @@ internal fun AbTableScreen(
             showDayTypeSelector = false,
             onDismiss = { overrideEditingDate = null },
             onApply = { dayOfWeek, dayType, holidayLabel ->
-                if (dayOfWeek == null) {
-                    onClearLessonOverride(date)
+                if (dayType == DayType.HOLIDAY) {
+                    onUpdateHolidaySpecialLabel(date, holidayLabel)
                 } else {
-                    onSaveLessonOverride(date, dayOfWeek, dayType)
+                    if (dayOfWeek == null) {
+                        onClearLessonOverride(date)
+                    } else {
+                        onSaveLessonOverride(date, dayOfWeek, dayType)
+                    }
                 }
-                onUpdateHolidaySpecialLabel(date, holidayLabel)
                 overrideEditingDate = null
             }
         )
@@ -461,7 +472,7 @@ private fun DayTypeLegend(
     onOpenExamTimetables: () -> Unit,
     onPrepareNextAcademicYear: (() -> Unit)?
 ) {
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
+    Card(colors = CardDefaults.cardColors(containerColor = appCardContainerColor(standardColor = MaterialTheme.colorScheme.surfaceContainerLow))) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -517,7 +528,7 @@ private fun DayChip(label: String, visual: DayTypeVisual) {
 @Composable
 private fun WeekHeader(saturdayClassesEnabled: Boolean) {
     Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        colors = CardDefaults.cardColors(containerColor = appCardContainerColor(standardColor = MaterialTheme.colorScheme.surfaceContainerLow)),
         shape = RoundedCornerShape(16.dp),
         modifier = Modifier.fillMaxWidth()
     ) {
@@ -591,7 +602,7 @@ private fun NextAcademicYearHeader(academicYear: Int) {
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun WeekRow(
+internal fun WeekRow(
     abEnabled: Boolean,
     row: WeekRow,
     settingsStart: LocalDate,
@@ -614,6 +625,7 @@ private fun WeekRow(
         modifier = Modifier
             .fillMaxWidth()
             .alpha(if (isPast) 0.38f else 1f)
+            .background(appCardContainerColor(standardColor = Color.Transparent, subdued = isPast), RoundedCornerShape(8.dp))
             .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp))
             .padding(8.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -763,7 +775,7 @@ private fun AddBreakDialog(
     )
 }
 
-private data class WeekRow(
+internal data class WeekRow(
     val weekStart: LocalDate,
     val weekEnd: LocalDate,
     val days: List<LocalDate>

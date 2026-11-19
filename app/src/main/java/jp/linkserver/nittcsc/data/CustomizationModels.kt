@@ -46,13 +46,29 @@ data class LessonNotificationTrigger(
     val minutesBefore: Int
 )
 
+/** 登校前・下校前通知の既定値（授業前通知と同じく、2つまでタイミングを持てる）。 */
+val DEFAULT_ARRIVAL_TRIGGERS = listOf(LessonNotificationTrigger(false, 60), LessonNotificationTrigger(false, 10))
+val DEFAULT_DEPARTURE_TRIGGERS = listOf(LessonNotificationTrigger(false, 10), LessonNotificationTrigger(false, 0))
+const val DEFAULT_ARRIVAL_TITLE_TEMPLATE = "そろそろ登校の時間です"
+const val DEFAULT_ARRIVAL_BODY_TEMPLATE =
+    "登校時刻 {time} の{minutes}分前です。\n今日の最初の授業: {first_period} {first_subject}（{first_start_time}開始・{first_location}）\n今日は全部で{lesson_count}コマです。"
+const val DEFAULT_DEPARTURE_TITLE_TEMPLATE = "そろそろ下校の時間です"
+const val DEFAULT_DEPARTURE_BODY_TEMPLATE =
+    "下校時刻 {time} の{minutes}分前です。\n今日の授業は全部で{lesson_count}コマでした。\n明日の最初の授業: {tomorrow_first_subject}（{tomorrow_first_start_time}開始）"
+
 data class LessonNotificationCustomization(
     val startTriggers: List<LessonNotificationTrigger>,
     val endTriggers: List<LessonNotificationTrigger>,
     val startTitleTemplate: String,
     val startBodyTemplate: String,
     val endTitleTemplate: String,
-    val endBodyTemplate: String
+    val endBodyTemplate: String,
+    val arrivalTriggers: List<LessonNotificationTrigger> = DEFAULT_ARRIVAL_TRIGGERS,
+    val departureTriggers: List<LessonNotificationTrigger> = DEFAULT_DEPARTURE_TRIGGERS,
+    val arrivalTitleTemplate: String = DEFAULT_ARRIVAL_TITLE_TEMPLATE,
+    val arrivalBodyTemplate: String = DEFAULT_ARRIVAL_BODY_TEMPLATE,
+    val departureTitleTemplate: String = DEFAULT_DEPARTURE_TITLE_TEMPLATE,
+    val departureBodyTemplate: String = DEFAULT_DEPARTURE_BODY_TEMPLATE
 ) {
     companion object {
         fun defaults(legacyStartMinutes: Int = 10) = LessonNotificationCustomization(
@@ -71,6 +87,39 @@ data class LessonNotificationCustomization(
         )
     }
 }
+
+/** 登校前・下校前通知の本文に差し込む値。 */
+data class SchoolTripTemplateValues(
+    val minutes: Int,
+    /** 登校時刻（登校前通知）または下校時刻（下校前通知）。HH:mm。 */
+    val time: String,
+    val firstSubject: String = "なし",
+    val firstTeacher: String = "",
+    val firstLocation: String = "",
+    val firstPeriod: String = "",
+    val firstStartTime: String = "",
+    val lessonCount: Int = 0,
+    val tomorrowFirstSubject: String = "なし",
+    val tomorrowFirstLocation: String = "",
+    val tomorrowFirstPeriod: String = "",
+    val tomorrowFirstStartTime: String = ""
+)
+
+fun renderSchoolTripTemplate(template: String, values: SchoolTripTemplateValues): String =
+    linkedMapOf(
+        "{minutes}" to values.minutes.toString(),
+        "{time}" to values.time,
+        "{first_subject}" to values.firstSubject,
+        "{first_teacher}" to values.firstTeacher,
+        "{first_location}" to values.firstLocation,
+        "{first_period}" to values.firstPeriod,
+        "{first_start_time}" to values.firstStartTime,
+        "{lesson_count}" to values.lessonCount.toString(),
+        "{tomorrow_first_subject}" to values.tomorrowFirstSubject,
+        "{tomorrow_first_location}" to values.tomorrowFirstLocation,
+        "{tomorrow_first_period}" to values.tomorrowFirstPeriod,
+        "{tomorrow_first_start_time}" to values.tomorrowFirstStartTime
+    ).entries.fold(template) { text, (token, value) -> text.replace(token, value) }
 
 data class LessonNotificationTemplateValues(
     val subject: String,
@@ -170,6 +219,12 @@ fun encodeLessonNotificationCustomization(config: LessonNotificationCustomizatio
         put("startBodyTemplate", config.startBodyTemplate)
         put("endTitleTemplate", config.endTitleTemplate)
         put("endBodyTemplate", config.endBodyTemplate)
+        put("arrivalTriggers", triggerArray(config.arrivalTriggers))
+        put("departureTriggers", triggerArray(config.departureTriggers))
+        put("arrivalTitleTemplate", config.arrivalTitleTemplate)
+        put("arrivalBodyTemplate", config.arrivalBodyTemplate)
+        put("departureTitleTemplate", config.departureTitleTemplate)
+        put("departureBodyTemplate", config.departureBodyTemplate)
     }.toString()
 }
 
@@ -198,7 +253,14 @@ fun decodeLessonNotificationCustomization(
             startTitleTemplate = obj.optString("startTitleTemplate", defaults.startTitleTemplate),
             startBodyTemplate = obj.optString("startBodyTemplate", defaults.startBodyTemplate),
             endTitleTemplate = obj.optString("endTitleTemplate", defaults.endTitleTemplate),
-            endBodyTemplate = obj.optString("endBodyTemplate", defaults.endBodyTemplate)
+            endBodyTemplate = obj.optString("endBodyTemplate", defaults.endBodyTemplate),
+            // 旧データ（キー無し）は既定値になる。
+            arrivalTriggers = triggers("arrivalTriggers", defaults.arrivalTriggers),
+            departureTriggers = triggers("departureTriggers", defaults.departureTriggers),
+            arrivalTitleTemplate = obj.optString("arrivalTitleTemplate", defaults.arrivalTitleTemplate),
+            arrivalBodyTemplate = obj.optString("arrivalBodyTemplate", defaults.arrivalBodyTemplate),
+            departureTitleTemplate = obj.optString("departureTitleTemplate", defaults.departureTitleTemplate),
+            departureBodyTemplate = obj.optString("departureBodyTemplate", defaults.departureBodyTemplate)
         )
     }.getOrDefault(defaults)
 }

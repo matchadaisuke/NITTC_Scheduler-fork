@@ -1,5 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="task_auto_reminder_tomorrow">「%1$s」の期日は明日です</string>
+    <string name="task_auto_reminder_today">「%1$s」の期日は今日です</string>
+    <string name="lesson_notification_basic_settings">基本設定</string>
+    <string name="lesson_notification_live_settings">ライブアップデートの詳細設定</string>
+    <string name="lesson_notification_excluded_lessons">通知しない授業</string>
+    <string name="lesson_notification_add_exclusion">通知しない授業を追加</string>
     <string name="app_name">NITTC Scheduler</string>
 
     <!-- Phase Labels -->
@@ -168,7 +174,16 @@
     <string name="label_period">期間</string>
     <string name="label_period_settings">期間設定</string>
     <string name="dialog_prepare_next_academic_year_title">%d年度前期を準備しますか？</string>
-    <string name="dialog_prepare_next_academic_year_message">次年度前期用の空のA/B表と時間割を作成します。現在年度のA/B表と時間割は変更されません。</string>
+    <string name="dialog_prepare_next_academic_year_message">次年度前期用の空のA/B表と時間割を作成します。現在年度のA/B表と時間割は変更されません</string>
+    <string name="dialog_legacy_timetable_title">時間割の引き継ぎ</string>
+    <string name="dialog_legacy_timetable_message">%d年度に登録した時間割は、前期・後期のどちらの内容ですか？選択した学期へ移行します</string>
+    <string name="btn_legacy_timetable_preview">旧時間割をプレビュー</string>
+    <string name="title_legacy_timetable_preview">%d年度・旧時間割の内容</string>
+    <string name="msg_legacy_timetable_preview_empty">登録済みの授業はありません</string>
+    <string name="label_legacy_timetable_weekday">%s曜日</string>
+    <string name="btn_legacy_timetable_first">前期に入れる</string>
+    <string name="btn_legacy_timetable_second">後期に入れる</string>
+    <string name="msg_legacy_timetable_move_failed">時間割を移せませんでした。もう一方の学期に登録済みの授業がないか確認してください</string>
     <string name="label_academic_year">%d年度</string>
     <string name="label_next_academic_year_first_term">%d年度 前期</string>
     <string name="label_next_academic_year_preparing">次年度・準備中</string>
@@ -184,7 +199,7 @@
     <string name="label_holiday_mode_schedule">日程振替</string>
     <string name="label_holiday_mode_label">特別ラベル</string>
     <string name="desc_holiday_mode_schedule">この日に別の曜日の授業を割り当てます</string>
-    <string name="desc_holiday_mode_label">この日に中間試験等のラベルを付けます</string>
+    <string name="desc_holiday_mode_label">ラベルを付けると、この日は休日になります</string>
 
     <!-- Date/Time Related -->
     <string name="label_start_date">開始日: %s</string>
@@ -213,6 +228,10 @@
     <string name="holiday_label_school_closed_short">休校</string>
     <string name="holiday_label_excursion">遠足</string>
     <string name="holiday_label_excursion_short">遠足</string>
+    <string name="holiday_label_event">行事</string>
+    <string name="holiday_label_event_short">行事</string>
+    <string name="holiday_label_exam_return">試験返却</string>
+    <string name="holiday_label_exam_return_short">返却</string>
 
     <!-- Download Related -->
     <string name="msg_downloading">ダウンロード中</string>
@@ -472,7 +491,7 @@
     <string name="setup_exam_later_description">今は通常の時間割を使います。テスト用の時間割は、設定画面からいつでも有効にできます。</string>
     <string name="setup_review_title">この内容で時間割を作成します</string>
     <string name="setup_review_description">内容を確認してください。開始すると、教科を入力する画面が開きます。</string>
-    <string name="setup_semester_on">前期・後期：使用する（4〜9月／10〜3月）</string>
+    <string name="setup_semester_on">前期・後期：使用する</string>
     <string name="setup_semester_off">前期・後期：分けない</string>
     <string name="setup_ab_on">A/B：使用する</string>
     <string name="setup_ab_off">A/B：使用しない</string>
@@ -486,9 +505,9 @@
     <string name="daytype_regular">授業</string>
     <string name="special_timetable_settings_title">特殊時間割機能</string>
     <string name="special_timetable_settings_description">前期・後期、A/B、テスト時間割を設定します</string>
+    <string name="special_timetable_settings_release_description">前期・後期の時間割を設定します</string>
     <string name="legend_school_days_toggle">日付を押すと授業日・休日が切り替わります</string>
     <string name="tutorial_school_days_drag">日付を長押ししたままドラッグすると、授業日・休日をまとめて変更できます。</string>
-    <string name="setup_open_ab_table">A/B表を設定する</string>
 
     <!-- Settings: Timetable Settings Section -->
     <string name="section_timetable_settings">時間割設定</string>
@@ -498,7 +517,15 @@
     <string name="settings_expanded_state">展開中</string>
     <string name="settings_collapsed_state">折りたたみ中</string>
     <string name="label_semester_timetables">前期・後期で時間割を分ける</string>
-    <string name="desc_semester_timetables">オンにすると4〜9月は前期、10〜3月は後期の時間割を使用します</string>
+    <string name="label_second_term_start">後期開始日</string>
+    <string name="value_second_term_start">%1$d月%2$d日</string>
+    <string name="desc_second_term_start">毎年度の後期開始日です。初期値は10月1日です。</string>
+    <string name="label_month">月</string>
+    <string name="label_day">日</string>
+    <string name="label_second_term_unset">未設定</string>
+    <string name="dialog_second_term_unset_title">後期の時間割が未設定です</string>
+    <string name="dialog_second_term_unset_message">後期は前期とは別の時間割です。時間割編集で後期の授業を登録してください。</string>
+    <string name="desc_semester_timetables">オンにすると時期によって前期/後期の時間割を分けます</string>
     <string name="label_first_term">前期</string>
     <string name="label_second_term">後期</string>
     <string name="label_koshi_notation">校時表記の種類</string>
@@ -534,7 +561,9 @@
     <string name="label_departure_time">下校時刻（空欄で自動）</string>
     <string name="placeholder_time">--</string>
     <string name="btn_save_timetable_settings">時間割設定を保存</string>
-    <string name="section_navigation_settings">ナビゲーション設定</string>
+    <string name="section_navigation_settings">上級者向け機能</string>
+    <string name="label_show_sync_button">他のデバイスと同期ボタンを表示</string>
+    <string name="desc_show_sync_button">上部バーとその他の操作メニューに同期ボタンを表示します。</string>
     <string name="section_display_settings">表示設定</string>
     <string name="label_app_theme">外観モード</string>
     <string name="dialog_app_theme_title">外観モードを選択</string>
@@ -600,6 +629,7 @@
     <string name="m3e_lesson_ongoing">授業中</string>
     <string name="m3e_lesson_next">次の授業</string>
     <string name="m3e_lesson_today">今日</string>
+    <string name="a11y_timetable_contains_today">今日を含む</string>
     <string name="m3e_lesson_date">%1$d/%2$d（%3$s）</string>
     <string name="m3e_lesson_date_time">%1$s・%2$s  %3$s–%4$s</string>
     <string name="m3e_lesson_starts_in">開始まで %1$s</string>
@@ -611,7 +641,7 @@
     <string name="m3e_duration_days_hours">%1$d日%2$d時間</string>
     <string name="lesson_start_live_update_body">次は「%1$s」です。</string>
     <string name="label_lesson_start_live_update_early_minutes">授業開始時間を早める</string>
-    <string name="desc_lesson_start_live_update_early_minutes">カウントダウン終了時刻を何分か早めます\n実際は1分前くらいにチャイムが鳴ると思うので、デフォルトは1分です</string>
+    <string name="desc_lesson_start_live_update_early_minutes">カウントダウン終了時刻を何分か早めます</string>
     <string name="lesson_start_live_update_early_none">早めない</string>
     <string name="lesson_start_live_update_early_value">%1$d分早める</string>
     <string name="lesson_start_live_update_chip_minutes">%1$d分</string>
@@ -644,11 +674,24 @@
     <string name="dialog_clear_app_calendar_events_confirm_categories">対象: %1$s</string>
     <string name="msg_app_calendar_events_deleted">%1$d件のカレンダー予定を削除しました。</string>
     <string name="msg_calendar_delete_permission_denied">カレンダー権限がないため削除できませんでした。</string>
+    <string name="calendar_delete_counting">削除対象を確認中…</string>
+    <string name="calendar_delete_running">削除中…</string>
+    <string name="calendar_delete_success_title">削除完了</string>
+    <string name="calendar_delete_failure_title">削除を完了できませんでした</string>
+    <string name="calendar_delete_empty">削除対象の予定はありません</string>
+    <string name="calendar_delete_category_count">%1$s: %2$d件</string>
+    <string name="calendar_delete_category_result">%1$s: %2$d件削除完了、残留%3$d件</string>
+    <string name="calendar_delete_category_unverified">%1$s: 削除結果を確認できませんでした。</string>
+    <string name="calendar_delete_remaining">未削除の予定が残っています。再試行してください</string>
+    <string name="calendar_delete_provider_failed">カレンダーの読み取り、削除、または結果の確認に失敗しました。時間をおいて再試行してください</string>
+    <string name="calendar_delete_google_sync_note">Googleカレンダーなど他の端末への反映には、アカウントの同期が必要です。授業の自動同期がオンの場合、予定が再追加されることがあります</string>
+    <string name="calendar_delete_retry">再試行</string>
+    <string name="msg_calendar_sync_cleanup_failed">既存の授業の削除を確認できなかったため、重複を防ぐためにカレンダー同期を中止しました</string>
     <string name="label_show_current_time_marker">現在時刻マーカーを表示</string>
     <string name="desc_show_current_time_marker">時間割画面に現在時刻の表示を追加します</string>
     <string name="section_experimental">実験的機能 (Experimental)</string>
     <string name="label_show_weekday_on_dates">日付に曜日を表示</string>
-    <string name="desc_show_weekday_on_dates">時間割上部や期間表示を除き、日付の横に(金)のような曜日を表示します</string>
+    <string name="desc_show_weekday_on_dates">日付の横に曜日を表示します</string>
     <string name="label_unify_task_plan_view">ToDo タブを有効化</string>
     <string name="desc_unify_task_plan_view">「課題」「予定」タブを一つのタブに統合します</string>
     <string name="btn_reset_update_dismiss">更新通知の抑止を解除</string>
@@ -766,8 +809,9 @@
     <string name="legend_ab_toggle">タップで切替: A → B → 休日</string>
     <string name="legend_ab_override_long_press">長押しでカスタム</string>
     <string name="btn_create_exam_timetable">試験時間割を作成</string>
-    <string name="tutorial_exam_button_first_visit">画面上部の試験時間割ボタンから、試験日ごとの時間割を設定できます。</string>
-    <string name="tutorial_exam_label_created">試験用ラベルを設定しました。「時間割編集」タブを開き、画面上部の試験時間割ボタンから内容を設定できます。</string>
+    <string name="tutorial_semester_switch">前期と後期の時間割は別々に設定できます。画面上部の学期名（▽）をタップして切り替えられます</string>
+    <string name="tutorial_exam_button_first_visit">画面上部の試験時間割ボタンから、テスト日の時間割を設定できます</string>
+    <string name="tutorial_exam_label_created">試験用ラベルを設定しました。「時間割編集」タブを開き、画面上部の試験時間割ボタンから内容を設定できます</string>
     <string name="tutorial_lesson_long_press">授業を長押しすると、課題・予定の追加や授業メモ、授業変更などのアクションを開けます。</string>
     <string name="tutorial_ab_multi_day_drag">日付を長押ししたまま別の日付までドラッグすると、選んだ範囲のA日・B日・休日をまとめて変更できます。</string>
     <string name="tutorial_ab_custom_long_press">日付を長押しすると、授業曜日の指定や中間・期末ラベルなど、その日だけの設定をカスタムできます。</string>
@@ -789,6 +833,11 @@
     <string name="dialog_exam_memo_title">試験メモ</string>
     <string name="hint_exam_memo_text">持ち込み可能物品などを入力</string>
     <string name="label_exam_no_test">試験なし</string>
+    <string name="label_exam_unset">未設定</string>
+    <string name="dialog_exam_unset_title">試験時間割が未設定です</string>
+    <string name="dialog_exam_unset_message">試験時間割は、編集タブ上部のこのアイコンから設定できます。</string>
+    <string name="dialog_exam_unset_question">設定画面を開きますか？</string>
+    <string name="btn_configure_exam_timetable">設定する</string>
 
     <!-- About Screen -->
     <string name="about_screen_title">このアプリについて</string>
@@ -799,6 +848,8 @@
     <string name="about_version_label" translatable="false">%1$s  v%2$s (%3$d)</string>
     <string name="about_simple_version_title">バージョン</string>
     <string name="about_simple_version_value" translatable="false">v%1$s</string>
+    <string name="about_overview_channel_title">チャネル</string>
+    <string name="about_overview_build_title">ビルド</string>
     <string name="about_dev_channel_title">開発チャネル</string>
     <string name="about_dev_channel_dialog_title">開発チャネル: %1$s</string>
     <string name="about_dev_channel_value_intdev">内部検証版</string>
@@ -814,12 +865,17 @@
     <string name="about_version_details_title">バージョン詳細</string>
     <string name="about_version_details_message">バージョン: %1$s\n内部バージョン番号: %2$d\nビルド番号: %3$s</string>
     <string name="about_support_title">サポート情報</string>
+    <string name="about_information_title">関連情報</string>
+    <string name="about_support_github_title">GitHub</string>
+    <string name="about_support_x_title">X</string>
+    <string name="about_support_x_help">開発者への連絡はこちら</string>
     <string name="about_support_help">不具合報告や連絡先はこちら</string>
     <string name="about_support_open_site">GitHubを開く</string>
-    <string name="about_support_open_twitter">Twitterを開く</string>
+    <string name="about_support_open_twitter">Xを開く</string>
     <string name="about_support_site_url" translatable="false">https://github.com/Link2011-Act2/NITTC_Scheduler/releases</string>
     <string name="about_support_twitter_url" translatable="false">https://x.com/Link_2011A</string>
     <string name="about_update_section_title">アップデート</string>
+    <string name="about_update_saved">ダウンロード・インストールの状況を確認できます</string>
     <string name="about_update_section_help">GitHub Releases から新しいバージョンがないか確認します</string>
     <string name="about_update_check_button">アップデートを確認</string>
     <string name="about_update_checking">GitHub Releases を確認しています…</string>
@@ -828,6 +884,10 @@
     <string name="about_update_check_failed">アップデートを確認できませんでした: %1$s</string>
 
     <string name="update_screen_title">アップデートがあります</string>
+    <string name="cd_available_app_update">アップデートがあります。更新の確認を開く</string>
+    <string name="update_prompt_body">新しいバージョン %1$s が利用できます。アップデートしますか？</string>
+    <string name="update_prompt_confirm">更新内容を確認</string>
+    <string name="update_prompt_ignore">このバージョンは無視</string>
     <string name="update_release_notes_title">リリースノート</string>
     <string name="update_release_notes_empty">このバージョンのリリースノートはありません。</string>
     <string name="update_intermediate_release_notes_title">途中のリリースノート</string>
@@ -843,7 +903,7 @@
     <string name="update_install_permission_required">不明なアプリのインストールを許可してから、この画面に戻ってもう一度ボタンを押してください。</string>
     <string name="update_download_failed">ダウンロードに失敗しました: %1$s</string>
     <string name="update_banner_title">アップデートがあります</string>
-    <string name="update_banner_body">%1$s が利用できます。タップして詳細を開きます。</string>
+    <string name="update_banner_body">%1$s が利用できます。タップして更新を確認します。</string>
     <string name="update_banner_dismiss">更新通知を閉じる</string>
 
     <!-- OSS ライセンス（About 画面） -->
@@ -1008,4 +1068,185 @@
     <string name="reminder_debug_environment_app_notifications">アプリ通知</string>
     <string name="reminder_debug_environment_task_channel">課題通知チャンネル</string>
     <string name="reminder_debug_environment_exact_alarm">正確なアラーム</string>
+    <string name="settings_value_unset">未設定</string>
+    <string name="settings_optional_time_hint">未入力でもそのまま使えます</string>
+    <string name="ai_runtime_title">AIエンジン</string>
+    <string name="ai_runtime_checking">AIエンジンを確認しています。</string>
+    <string name="ai_runtime_description">AI機能には、端末に対応したAIエンジンの追加ダウンロードが必要です（展開後 約6MB）。モデルは別途ダウンロードしてください。取得後はオフラインで利用できます。</string>
+    <string name="ai_runtime_bundled">同梱のAIエンジンを利用できます。外部版を取得すると、次回起動時から取得済みのエンジンを優先します。</string>
+    <string name="ai_runtime_downloaded">AIエンジンを取得済みです。オフラインで利用できます。</string>
+    <string name="ai_runtime_unsupported">AI機能はARM64・x86_64の64bit環境に対応しています。この端末では利用できません。</string>
+    <string name="ai_runtime_required">AI画面でAIエンジンをダウンロードしてから、もう一度お試しください。</string>
+    <string name="ai_runtime_load_failed">AIエンジンを読み込めませんでした。アプリを再起動してお試しください。</string>
+    <string name="ai_runtime_unpublished">対応するAIエンジンが配布先に見つかりません。公開後にもう一度お試しください。</string>
+    <string name="ai_runtime_download_failed">AIエンジンの取得・検証に失敗しました。通信状況と空き容量を確認して、もう一度お試しください。</string>
+    <string name="ai_runtime_download">AIエンジンをダウンロード</string>
+    <string name="ai_runtime_retry">AIエンジンの取得を再試行</string>
+    <string name="ai_runtime_progress">AIエンジンを取得中：%1$d%%</string>
+    <string name="qr_title">QR共有（Beta）</string>
+    <string name="qr_back">戻る</string>
+    <string name="qr_home_description">時間割やA/B表などを、QRで共有できます。</string>
+    <string name="qr_share_action_description">送る項目を選んでQRを表示</string>
+    <string name="qr_read_action_description">QRを読み取り、内容を確認して取り込む</string>
+    <string name="qr_share">共有する</string>
+    <string name="qr_read">読み取る</string>
+    <string name="qr_select_description">送る年度と項目を選んでください。授業メモ・予定・課題は、送るものを個別に選択できます。</string>
+    <string name="qr_first">前期の時間割</string>
+    <string name="qr_second">後期の時間割</string>
+    <string name="qr_cancellations">休講</string>
+    <string name="qr_cancellations_and_changes">休講・授業変更</string>
+    <string name="qr_changes">授業変更</string>
+    <string name="qr_days">A/B表</string>
+    <string name="qr_notes">授業メモ</string>
+    <string name="qr_plans">予定</string>
+    <string name="qr_tasks">課題</string>
+    <string name="qr_days_scope">選択年度・期間のA/B日・休日・日程振替と、期間に重なる長期休み</string>
+    <string name="qr_days_year">年度全体</string>
+    <string name="qr_days_first">前期</string>
+    <string name="qr_days_second">後期</string>
+    <string name="qr_first_days">前期のA/B表</string>
+    <string name="qr_second_days">後期のA/B表</string>
+    <string name="qr_days_semester_scope">この学期のA/B日・休日・日程振替・長期休み</string>
+    <string name="qr_days_range">%1$s 〜 %2$s</string>
+    <string name="qr_import_days_scoped">選択した年度・期間のA/B日・休日・振替だけを置き換えます。他の期間は保持します。</string>
+    <string name="qr_import_days_start_notice">後期開始日を照合します。不一致の場合は取り込まず、設定も変更しません。</string>
+    <string name="qr_import_breaks_scoped">長期休み：対象期間に現在%1$d件・受信%2$d件。年度・学期をまたぐ休みは開始日と終了日を丸ごと取り込み、既存の期間外部分も保持します。</string>
+    <string name="qr_personal_scope">送るものを個別に選択</string>
+    <string name="qr_year_scope">選んだ年度のデータ</string>
+    <string name="qr_pick_count">選ぶ（%1$d件）</string>
+    <string name="qr_pick_title">共有する%1$sを選択</string>
+    <string name="qr_selected_count">選択中：%1$d件</string>
+    <string name="qr_note_slot">%1$d限</string>
+    <string name="qr_select_all">すべて選択</string>
+    <string name="qr_select_incomplete_all">未完了をすべて選択</string>
+    <string name="qr_select_none">選択を解除</string>
+    <string name="qr_no_items">共有できるデータがありません。</string>
+    <string name="qr_done">完了</string>
+    <string name="qr_generate">QRを表示</string>
+    <string name="qr_reminder_notice">通知・カレンダーの設定は共有しません。新しく追加する予定・課題のリマインダーはオフになります。</string>
+    <string name="qr_exams">試験時間割</string>
+    <string name="qr_exams_scope">選択年度の試験日・集合時刻・各試験の時刻・科目・担当・場所・メモ</string>
+    <string name="qr_timetable_scope">選択年度・学期の時間割と、照合用の授業時刻設定</string>
+    <string name="qr_import_exams_scope">対象年度の試験時間割と試験日ラベルを置き換え（件数は試験日の数。他の日のA/B・休日・振替は保持）</string>
+    <string name="qr_import_times_notice">授業時刻と後期開始日を受信側の設定と照合します。不一致の場合は取り込まず、設定も変更しません。</string>
+    <string name="qr_display_description">相手の「読み取る」で、このQRを読み取ってください。複数枚の場合は繰り返し表示します。</string>
+    <string name="qr_part_number">%1$d / %2$d枚</string>
+    <string name="qr_image_share">QR画像を送って共有</string>
+    <string name="qr_image_description">クラス名を画像に入れます。1枚に収まる場合はPNG、収まらない場合は連続QRのGIFとして共有します。</string>
+    <string name="qr_image_progress">画像を生成中：%1$d / %2$d枚</string>
+    <string name="qr_class_label">クラス名</string>
+    <string name="qr_class_hint">例：3E</string>
+    <string name="qr_image_title">%1$s　時間割QR</string>
+    <string name="qr_image_year">%1$d年度</string>
+    <string name="qr_image_instruction">NITTC Schedulerで読み取り</string>
+    <string name="qr_cancel">キャンセル</string>
+    <string name="qr_scan_hint">QRコードにカメラを向けてください</string>
+    <string name="qr_scan_percent">%1$d%%</string>
+    <string name="qr_scan_keep_aimed">そのまま向けてください</string>
+    <string name="qr_fragment_progress">QR断片を%1$d / %2$d枚受信済み</string>
+    <string name="qr_fragment_received">断片%1$d：受信済み</string>
+    <string name="qr_fragment_missing">断片%1$d：未受信</string>
+    <string name="qr_fragment_overflow">+%1$d</string>
+    <string name="qr_display_speed">送信する速度</string>
+    <string name="qr_display_speed_description">QRが切り替わる速さを選べます。読み取りにくいときは「安定」にしてください。</string>
+    <string name="qr_speed_stable">安定</string>
+    <string name="qr_speed_standard">標準</string>
+    <string name="qr_speed_fast">高速</string>
+    <string name="qr_speed_ultra_fast">超高速</string>
+    <string name="qr_scan_complete">受信と検証が完了しました</string>
+    <string name="qr_scan_failed">QRの読み取りに失敗しました</string>
+    <string name="qr_scan_retry_camera">カメラを再試行</string>
+    <string name="qr_camera_permission">カメラの読み取りにはカメラ権限が必要です。画像・GIFからも読み込めます。</string>
+    <string name="qr_enable_camera">カメラを許可する</string>
+    <string name="qr_camera_error">カメラを開始できませんでした。写真ライブラリからも読み込めます。</string>
+    <string name="qr_read_image">画像・GIFから読み込む</string>
+    <string name="qr_import_title">読み取り結果</string>
+    <string name="qr_import_source_label">%1$s・</string>
+    <string name="qr_import_add">追加する</string>
+    <string name="qr_import_replace">置き換える</string>
+    <string name="qr_import_both_terms">前期・後期の時間割</string>
+    <string name="qr_import_details">取り込みの詳細</string>
+    <string name="qr_import_notes_review">異なるメモを確認</string>
+    <string name="qr_import_all_years">全年度</string>
+    <string name="qr_import_days_and_breaks">A/B表</string>
+    <string name="qr_import_first_days_and_breaks">前期A/B表・休暇</string>
+    <string name="qr_import_second_days_and_breaks">後期A/B表・休暇</string>
+    <string name="qr_import_year_days_and_breaks">年度全体のA/B表・休暇</string>
+    <string name="qr_import_all_years_warning">すべての年度のデータを置き換えます</string>
+    <string name="qr_import_duplicates_skipped">%1$d件が重複</string>
+    <string name="qr_import_number">%1$d件</string>
+    <string name="qr_import_back_to_summary">概要に戻る</string>
+    <string name="qr_import_busy">取り込み中…</string>
+    <string name="qr_import_add_count">%1$s：追加%2$d件・重複%3$d件</string>
+    <string name="qr_import_items_scope">科目・担当・タイトル・期限日時が同じ項目は追加せず、既存の内容・完了状態・通知設定を保持します。対応する授業がないか内容が異なる項目は、授業に紐づけず追加します。</string>
+    <string name="qr_import_notes_scope">同じ日付・時限に同じ内容があれば追加しません。内容が異なるメモは、選択したものだけ置き換えます。未選択のメモは現在の内容を保持します。</string>
+    <string name="qr_import_note_choices">異なるメモ：置換%1$d件・保持%2$d件</string>
+    <string name="qr_import_note_date">%1$s・%2$d限</string>
+    <string name="qr_import_note_current">現在のメモ</string>
+    <string name="qr_import_note_incoming">受信したメモ</string>
+    <string name="qr_import_note_replace">受信したメモに置き換える（未選択なら現在のメモを保持）</string>
+    <string name="qr_import_confirm">取り込む</string>
+    <string name="qr_import_result">追加%1$d件・重複%2$d件・メモ置換%3$d件・メモ保持%4$d件</string>
+    <string name="qr_import_unlinked">対応する授業が見つからないか内容が異なるため、課題・予定%1$d件は授業に紐づけず追加しました。</string>
+    <string name="qr_import_count">%1$s：現在%2$d件 → 受信%3$d件</string>
+    <string name="qr_import_timetable_scope">対象年度の、この学期の時間割をすべて置き換え</string>
+    <string name="qr_import_year_scope">対象年度のデータをすべて置き換え</string>
+    <string name="qr_import_all_scope">この種類のデータを全件置き換え（他の年度も含む）</string>
+    <string name="qr_import_breaks">長期休み：現在%1$d件 → 受信%2$d件（全件置き換え）</string>
+    <string name="qr_import_success">QRのデータを取り込みました。</string>
+    <string name="qr_import_partial">データは取り込みましたが、通知・カレンダーなどの更新に一部失敗しました。</string>
+    <string name="qr_error_version">このQRは対応していない形式のバージョンです。アプリを更新してから読み取ってください。</string>
+    <string name="qr_error_large">データが大きすぎます。共有する項目や件数を減らしてください。</string>
+    <string name="qr_error_different">別のデータが入ったQRです。読み取りをやり直すには「OK」を押してください</string>
+    <string name="qr_error_damaged">QRのデータが破損しています。読み取り直してください。</string>
+    <string name="qr_error_settings">授業時刻または後期開始日が送信側と一致しないか、照合用の時刻情報が不足しています。両端末の設定を合わせ、送信側のアプリを更新してQRを作り直してください。データは取り込んでいません。</string>
+    <string name="qr_error_lesson_reference">共有する課題・予定の紐付け先の授業が見つかりません。送信側で紐付け先を確認してから、QRを作り直してください。</string>
+    <string name="qr_error_invalid">有効な共有QRを読み取れませんでした。QRやファイルを確認してください。</string>
+    <string name="qr_error_image">共有画像を作成できませんでした。もう一度お試しください。</string>
+
+
+    <!-- Goldy APK transfers; independent from AI runtime/model downloads. -->
+    <string name="goldy_transfer_allow_install">設定でインストールを許可する</string>
+    <string name="goldy_transfer_channel">アプリの更新</string>
+    <string name="goldy_transfer_download">更新をダウンロード</string>
+    <string name="goldy_transfer_foreground_install">アプリに戻ってインストールしてください</string>
+    <string name="goldy_transfer_install">インストール</string>
+    <string name="goldy_transfer_open">更新画面を開く</string>
+    <string name="goldy_transfer_paused">ダウンロードが中断されました</string>
+    <string name="goldy_transfer_permission_guidance">設定でこのアプリからのインストールを許可し、戻ってください</string>
+    <string name="goldy_transfer_permission_ready">インストールの許可が必要です</string>
+    <string name="goldy_transfer_queued">ダウンロードを開始しています…</string>
+    <string name="goldy_transfer_restart">ダウンロードを再開</string>
+    <string name="goldy_transfer_restarted">最初からダウンロードし直しています…</string>
+    <string name="goldy_transfer_schedule_failed">ダウンロードを開始できませんでした</string>
+    <string name="goldy_transfer_title">NITTC Schedulerの更新</string>
+
+    <string name="goldy_update_available">アップデートがあります</string>
+    <string name="goldy_update_back">戻る</string>
+    <string name="goldy_update_cached">前回の確認結果</string>
+    <string name="goldy_update_cancel_download">ダウンロードをキャンセル</string>
+    <string name="goldy_update_cancelled">ダウンロードをキャンセルしました</string>
+    <string name="goldy_update_cleanup_failed">一時ファイルを削除できませんでした</string>
+    <string name="goldy_update_collapse">折りたたむ</string>
+    <string name="goldy_update_download_failed">ダウンロードに失敗しました</string>
+    <string name="goldy_update_downloading">ダウンロード中…</string>
+    <string name="goldy_update_expand">展開</string>
+    <string name="goldy_update_failed">更新の確認に失敗しました</string>
+    <string name="goldy_update_handed_off">インストーラーを開きました</string>
+    <string name="goldy_update_idle">更新を確認できます</string>
+    <string name="goldy_update_incomplete">一部の更新履歴を表示できません</string>
+    <string name="goldy_update_install_failed">インストールを開始できませんでした</string>
+    <string name="goldy_update_invalid_apk">このAPKでは更新できません</string>
+    <string name="goldy_update_no_apk">ダウンロードできるAPKがありません</string>
+    <string name="goldy_update_open_release">GitHubでリリースを見る</string>
+    <string name="goldy_update_preparing">インストールの準備中…</string>
+    <string name="goldy_update_ready">インストールできます</string>
+    <string name="goldy_update_restore_failed">更新情報を復元できませんでした</string>
+    <string name="goldy_update_retry">もう一度確認</string>
+    <string name="goldy_update_signing_mismatch">署名が異なるため更新できません</string>
+    <string name="goldy_update_title">アプリの更新</string>
+    <string name="goldy_update_verifying">更新ファイルを確認中…</string>
+    <string name="settings_open_failed">設定を開けませんでした</string>
+    <string name="goldy_update_view">更新内容を確認</string>
+    <string name="goldy_update_loading">更新情報を読み込み中…</string>
 </resources>

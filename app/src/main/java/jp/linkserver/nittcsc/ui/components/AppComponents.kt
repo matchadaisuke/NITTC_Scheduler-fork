@@ -17,10 +17,13 @@ import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -28,6 +31,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -60,14 +64,19 @@ import androidx.compose.material3.MediumFlexibleTopAppBar
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.NavigationItemIconPosition
+import androidx.compose.material3.ShortNavigationBar
+import androidx.compose.material3.ShortNavigationBarArrangement
+import androidx.compose.material3.ShortNavigationBarItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
-import androidx.compose.material3.SplitButton
 import androidx.compose.material3.SplitButtonDefaults
+import androidx.compose.material3.LocalMinimumInteractiveComponentSize
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
@@ -78,13 +87,17 @@ import androidx.compose.material3.TopAppBarScrollBehavior
 import androidx.compose.material3.ToggleFloatingActionButton
 import androidx.compose.material3.ToggleButton
 import androidx.compose.material3.ToggleButtonDefaults
+import androidx.compose.material3.ToggleButtonColors
 import androidx.compose.material3.contentColorFor
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
@@ -92,9 +105,12 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.LayoutDirection
 import jp.linkserver.nittcsc.data.UiDesignMode
 import jp.linkserver.nittcsc.ui.theme.ExpressiveFabShape
 import jp.linkserver.nittcsc.ui.theme.LocalUiDesignMode
+import jp.linkserver.nittcsc.ui.theme.appCardContainerColor
 
 @Composable
 fun AppSwitch(
@@ -229,6 +245,26 @@ fun AppFlexibleTopAppBar(
 @Composable
 fun AppBottomNavigation(
     modifier: Modifier = Modifier,
+    content: @Composable AppBottomNavigationScope.() -> Unit
+) {
+    if (LocalUiDesignMode.current == UiDesignMode.MATERIAL_3_EXPRESSIVE) {
+        ShortNavigationBar(
+            modifier = modifier,
+            arrangement = ShortNavigationBarArrangement.EqualWeight
+        ) {
+            ShortBottomNavigationScope.content()
+        }
+    } else {
+        NavigationBar(modifier = modifier) {
+            StandardBottomNavigationScope(this).content()
+        }
+    }
+}
+
+/** 再利用用の旧フローティングナビゲーション。通常の画面からは呼び出さない。 */
+@Composable
+fun AppFloatingBottomNavigation(
+    modifier: Modifier = Modifier,
     floatingActionButton: (@Composable () -> Unit)? = null,
     content: @Composable AppBottomNavigationScope.() -> Unit
 ) {
@@ -308,6 +344,8 @@ private data class StandardBottomNavigationScope(
 
 private object ExpressiveBottomNavigationScope : AppBottomNavigationScope
 
+private object ShortBottomNavigationScope : AppBottomNavigationScope
+
 private class RetainedFloatingActionButton {
     var content: (@Composable () -> Unit)? = null
 }
@@ -323,7 +361,17 @@ fun AppBottomNavigationScope.AppBottomNavigationItem(
     enabled: Boolean = true,
     selectedIndicatorColor: Color = MaterialTheme.colorScheme.secondaryContainer
 ) {
-    if (this is ExpressiveBottomNavigationScope) {
+    if (this is ShortBottomNavigationScope) {
+        ShortNavigationBarItem(
+            selected = selected,
+            onClick = onClick,
+            icon = icon,
+            label = label,
+            iconPosition = NavigationItemIconPosition.Top,
+            modifier = modifier,
+            enabled = enabled
+        )
+    } else if (this is ExpressiveBottomNavigationScope) {
         val containerColor = if (selected) selectedIndicatorColor else Color.Transparent
         val contentColor = if (selected) {
             contentColorFor(selectedIndicatorColor)
@@ -525,6 +573,7 @@ fun AppFabMenu(
 fun AppFloatingToolbar(
     modifier: Modifier = Modifier,
     containerColor: Color = MaterialTheme.colorScheme.surfaceContainer,
+    contentColor: Color = contentColorFor(containerColor),
     content: @Composable () -> Unit
 ) {
     if (LocalUiDesignMode.current == UiDesignMode.MATERIAL_3_EXPRESSIVE) {
@@ -533,13 +582,13 @@ fun AppFloatingToolbar(
             modifier = modifier,
             colors = FloatingToolbarDefaults.standardFloatingToolbarColors(
                 toolbarContainerColor = containerColor,
-                toolbarContentColor = contentColorFor(containerColor)
+                toolbarContentColor = contentColor
             )
         ) { content() }
     } else {
         Card(
             modifier = modifier,
-            colors = CardDefaults.cardColors(containerColor = containerColor)
+            colors = CardDefaults.cardColors(containerColor = containerColor, contentColor = contentColor)
         ) { content() }
     }
 }
@@ -582,10 +631,18 @@ fun AppConnectedButtonGroup(
     options: List<String>,
     selectedIndex: Int,
     onSelectedIndexChange: (Int) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    colorsForIndex: ((Int) -> ToggleButtonColors)? = null,
+    contentPadding: PaddingValues? = null,
+    iconSize: Dp = ToggleButtonDefaults.IconSize,
+    iconSpacing: Dp = ToggleButtonDefaults.IconSpacing
 ) {
+    val checkOrigin = TransformOrigin(
+        if (LocalLayoutDirection.current == LayoutDirection.Ltr) 0f else 1f, 0.5f
+    )
     Row(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth().selectableGroup(),
         horizontalArrangement = Arrangement.spacedBy(ButtonGroupDefaults.ConnectedSpaceBetween),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -594,6 +651,9 @@ fun AppConnectedButtonGroup(
             ToggleButton(
                 checked = selected,
                 onCheckedChange = { onSelectedIndexChange(index) },
+                enabled = enabled,
+                colors = colorsForIndex?.invoke(index) ?: ToggleButtonDefaults.colors(),
+                contentPadding = contentPadding ?: PaddingValues(horizontal = 4.dp, vertical = 10.dp),
                 shapes = when (index) {
                     0 -> ButtonGroupDefaults.connectedLeadingButtonShapes()
                     options.lastIndex -> ButtonGroupDefaults.connectedTrailingButtonShapes()
@@ -603,35 +663,30 @@ fun AppConnectedButtonGroup(
                     .weight(1f)
                     .semantics { role = Role.RadioButton }
             ) {
+                // 形状Morphと同じFastSpatialで領域を開閉し、チェックと文字を一緒に動かす。
                 AnimatedVisibility(
                     visible = selected,
                     enter = expandHorizontally(
-                        expandFrom = Alignment.CenterHorizontally,
+                        expandFrom = Alignment.Start,
                         animationSpec = MaterialTheme.motionScheme.fastSpatialSpec()
-                    ) + fadeIn(
-                        animationSpec = MaterialTheme.motionScheme.fastEffectsSpec()
                     ) + scaleIn(
-                        initialScale = 0.6f,
+                        initialScale = 0f,
+                        transformOrigin = checkOrigin,
                         animationSpec = MaterialTheme.motionScheme.fastSpatialSpec()
-                    ),
+                    ) + fadeIn(animationSpec = MaterialTheme.motionScheme.fastEffectsSpec()),
                     exit = shrinkHorizontally(
-                        shrinkTowards = Alignment.CenterHorizontally,
+                        shrinkTowards = Alignment.Start,
                         animationSpec = MaterialTheme.motionScheme.fastSpatialSpec()
-                    ) + fadeOut(
-                        animationSpec = MaterialTheme.motionScheme.fastEffectsSpec()
                     ) + scaleOut(
-                        targetScale = 0.6f,
+                        targetScale = 0f,
+                        transformOrigin = checkOrigin,
                         animationSpec = MaterialTheme.motionScheme.fastSpatialSpec()
-                    ),
+                    ) + fadeOut(animationSpec = MaterialTheme.motionScheme.fastEffectsSpec()),
                     label = "ConnectedButtonCheckVisibility"
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Filled.Check,
-                            contentDescription = null,
-                            modifier = Modifier.size(ToggleButtonDefaults.IconSize)
-                        )
-                        Spacer(modifier = Modifier.width(ToggleButtonDefaults.IconSpacing))
+                        Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(iconSize))
+                        Spacer(Modifier.width(iconSpacing))
                     }
                 }
                 Text(option, maxLines = 1)
@@ -651,30 +706,33 @@ fun AppSplitButton(
     primaryEnabled: Boolean = true,
     secondaryEnabled: Boolean = true
 ) {
-    SplitButton(
-        leadingButton = {
+    Row(
+        modifier = modifier.minimumInteractiveComponentSize().height(IntrinsicSize.Min),
+        horizontalArrangement = Arrangement.spacedBy(SplitButtonDefaults.Spacing)
+    ) {
+        // 公式Layoutと同じく操作領域は親で確保し、内側へ余白を重ねない。
+        CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
             SplitButtonDefaults.LeadingButton(
                 onClick = onPrimaryClick,
+                modifier = Modifier.weight(1f).fillMaxHeight(),
                 enabled = primaryEnabled,
                 content = primaryLabel
             )
-        },
-        trailingButton = {
             SplitButtonDefaults.OutlinedTrailingButton(
                 checked = false,
                 onCheckedChange = { onSecondaryClick() },
+                modifier = Modifier.weight(1f).fillMaxHeight(),
                 enabled = secondaryEnabled,
                 content = secondaryLabel
             )
-        },
-        modifier = modifier
-    )
+        }
+    }
 }
 
 @Composable
 fun AppCard(
     modifier: Modifier = Modifier,
-    containerColor: Color = MaterialTheme.colorScheme.surfaceContainer,
+    containerColor: Color = appCardContainerColor(standardColor = MaterialTheme.colorScheme.surfaceContainer),
     onClick: (() -> Unit)? = null,
     content: @Composable () -> Unit
 ) {

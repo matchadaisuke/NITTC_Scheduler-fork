@@ -120,3 +120,14 @@ $env:PATH="$env:JAVA_HOME\bin;$env:PATH"
 - 手動編集は小さな差分にし、既存の日本語コメント・命名・UI表現との一貫性を保つ。
 - バグ修正では、可能ならAndroid非依存部分を純粋関数へ分離して再現テストを追加する。
 - コミット、タグ、push、APKの実機インストールは、ユーザーから明示的に依頼された場合のみ行う。
+
+
+## 本家(Link2011-Act2/NITTC_Scheduler)取り込み後の注意
+
+- Room のバージョンは 54。フォークと本家で 49→50 の中身が別だったため、`MIGRATION_53_54` が列の有無を見て不足分を追加する（どちらの経路の端末でも安全）。スキーマを変えるときは 54→55 を追加し、`MIGRATION_53_54` は変更しない。
+- 通知エンジンは本家の実装（課題の自動リマインド種別、配信ゲート、実効時間割）が土台。フォーク独自の拡張は次の通り。
+  - 授業通知のカスタマイズ（タイトル/本文テンプレート、2つのタイミング）、追加通知(`AdditionalLessonNotificationWorker`)
+  - 登校前・下校前通知(`SchoolTripReminder`)。基準は実効時間割の登校時刻/下校時刻（空欄=自動）。設定は `lessonNotificationConfigJson` に保存され、端末間で同期される。
+  - 通知と同時に同期(`CloudFileSyncManager.syncAlongsideNotification`)。通知は待たせない。
+- 通知設定UIは「通知」一覧→種類ごとの個別ページ(`NotificationSettingsPage`)。新しい通知を足すときは enum に追加し、`NotificationSettingsPageScreen` に本体を書く。
+- MEGA同期は、旧プロトコルの syncPayload を捨ててスナップショット同期に切り替える(`withoutIncompatibleSyncPayload`)。

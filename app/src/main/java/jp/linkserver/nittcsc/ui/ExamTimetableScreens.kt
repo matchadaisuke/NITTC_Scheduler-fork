@@ -1,5 +1,7 @@
 package jp.linkserver.nittcsc.ui
 
+import jp.linkserver.nittcsc.ui.theme.appInsetContainerColor
+import jp.linkserver.nittcsc.ui.theme.appCardContainerColor
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -44,6 +46,7 @@ import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -58,15 +61,18 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import jp.linkserver.nittcsc.InternalFeatureFlags
 import jp.linkserver.nittcsc.R
+import jp.linkserver.nittcsc.data.DayType
 import jp.linkserver.nittcsc.data.DayTypeEntity
 import jp.linkserver.nittcsc.data.ExamDayScheduleEntity
 import jp.linkserver.nittcsc.data.ExamLessonEntity
 import jp.linkserver.nittcsc.data.HolidaySpecialLabel
 import jp.linkserver.nittcsc.data.SettingsEntity
 import jp.linkserver.nittcsc.logic.adaptiveEditorColumnCount
+import jp.linkserver.nittcsc.logic.canBridgeExamDays
 import jp.linkserver.nittcsc.logic.generateClassSlots
 import jp.linkserver.nittcsc.logic.formatExamPeriodLabel
 import jp.linkserver.nittcsc.logic.forExamTimetable
+import jp.linkserver.nittcsc.logic.updateTeacherAutoFill
 import androidx.compose.ui.res.stringResource
 import java.time.LocalDate
 import java.time.LocalTime
@@ -79,9 +85,14 @@ data class ExamPeriod(
     val dates: List<LocalDate>
 )
 
+/** 期間内の通常の休日を、試験日として誤って選択しない。 */
+internal fun examPeriodContainingDate(periods: List<ExamPeriod>, date: LocalDate): ExamPeriod? =
+    periods.firstOrNull { date in it.dates }
+
 fun buildExamPeriods(dayTypes: Collection<DayTypeEntity>): List<ExamPeriod> {
+    val holidays = dayTypes.filter { it.dayType == DayType.HOLIDAY }.mapTo(mutableSetOf()) { it.date }
     val examDays = dayTypes
-        .filter { it.holidaySpecialLabel == HolidaySpecialLabel.MIDTERM || it.holidaySpecialLabel == HolidaySpecialLabel.FINAL }
+        .filter { it.holidaySpecialLabel?.usesExamTimetable == true }
         .sortedBy { it.date }
     if (examDays.isEmpty()) return emptyList()
 
@@ -91,7 +102,7 @@ fun buildExamPeriods(dayTypes: Collection<DayTypeEntity>): List<ExamPeriod> {
     examDays.drop(1).forEach { day ->
         val label = day.holidaySpecialLabel!!
         val continuesCurrent = label == currentLabel &&
-            gapContainsOnlyWeekends(currentDates.last(), day.date)
+            canBridgeExamDays(currentDates.last(), day.date, holidays)
         if (continuesCurrent) {
             currentDates += day.date
         } else {
@@ -102,16 +113,6 @@ fun buildExamPeriods(dayTypes: Collection<DayTypeEntity>): List<ExamPeriod> {
     }
     result += ExamPeriod(currentLabel, currentDates.first(), currentDates.last(), currentDates.toList())
     return result
-}
-
-private fun gapContainsOnlyWeekends(previousDate: LocalDate, nextDate: LocalDate): Boolean {
-    if (!nextDate.isAfter(previousDate)) return false
-    var date = previousDate.plusDays(1)
-    while (date.isBefore(nextDate)) {
-        if (date.dayOfWeek.value < 6) return false
-        date = date.plusDays(1)
-    }
-    return true
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -155,7 +156,7 @@ fun ExamTimetablePeriodListScreen(
                 item {
                     Surface(
                         shape = MaterialTheme.shapes.large,
-                        color = MaterialTheme.colorScheme.surfaceContainerLow,
+                        color = appCardContainerColor(standardColor = MaterialTheme.colorScheme.surfaceContainerLow),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text(
@@ -177,7 +178,7 @@ fun ExamTimetablePeriodListScreen(
                             .clickable { onOpenPeriod(period) },
                         shape = MaterialTheme.shapes.large,
                         colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+                            containerColor = appCardContainerColor(standardColor = MaterialTheme.colorScheme.surfaceContainerLow)
                         )
                     ) {
                         Row(
@@ -539,7 +540,7 @@ fun ExamTimetableEditorScreen(
                                     color = if (selected) {
                                         MaterialTheme.colorScheme.primary
                                     } else {
-                                        MaterialTheme.colorScheme.surfaceContainerHigh
+                                        appInsetContainerColor(standardColor = MaterialTheme.colorScheme.surfaceContainerHigh)
                                     }
                                 ) {
                                     Text(
@@ -632,6 +633,22 @@ private fun ExamSlotEditorCard(
             .distinct()
             .sorted()
     }
+    var autoFilledTeacher by rememberSaveable(date.toEpochDay(), draft.slotIndex) {
+        mutableStateOf<String?>(null)
+    }
+    fun updateSubject(value: String) {
+        val candidates = subjectTeacherCandidates.entries
+            .firstOrNull { it.key.equals(value.trim(), ignoreCase = true) }?.value.orEmpty()
+        val result = updateTeacherAutoFill(draft.teacher, autoFilledTeacher, candidates)
+        autoFilledTeacher = result.autoFilledTeacher
+        onUpdateDraft(draft.copy(subject = value, teacher = result.teacher))
+    }
+    LaunchedEffect(teacherCandidatesForSubject) {
+        if (autoFilledTeacher == null) return@LaunchedEffect
+        val result = updateTeacherAutoFill(draft.teacher, autoFilledTeacher, teacherCandidatesForSubject)
+        autoFilledTeacher = result.autoFilledTeacher
+        if (draft.teacher != result.teacher) onUpdateDraft(draft.copy(teacher = result.teacher))
+    }
     val fieldColors = TextFieldDefaults.colors(
         focusedContainerColor = Color.Transparent,
         unfocusedContainerColor = Color.Transparent,
@@ -642,7 +659,7 @@ private fun ExamSlotEditorCard(
         modifier = modifier,
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+            containerColor = appCardContainerColor(standardColor = MaterialTheme.colorScheme.surfaceContainerLow)
         )
     ) {
         Column(
@@ -690,18 +707,7 @@ private fun ExamSlotEditorCard(
                     TextField(
                         value = draft.subject,
                         onValueChange = { value ->
-                            val matchedSubject = subjectSuggestions.firstOrNull {
-                                it.equals(value.trim(), ignoreCase = true)
-                            }
-                            val matchedTeachers = matchedSubject
-                                ?.let { subjectTeacherCandidates[it].orEmpty() }
-                                .orEmpty()
-                            onUpdateDraft(
-                                draft.copy(
-                                    subject = value,
-                                    teacher = matchedTeachers.singleOrNull() ?: draft.teacher
-                                )
-                            )
+                            updateSubject(value)
                             showSubjectSuggestions = false
                         },
                         placeholder = {
@@ -734,13 +740,7 @@ private fun ExamSlotEditorCard(
                         DropdownMenuItem(
                             text = { Text(candidate) },
                             onClick = {
-                                val matchedTeachers = subjectTeacherCandidates[candidate].orEmpty()
-                                onUpdateDraft(
-                                    draft.copy(
-                                        subject = candidate,
-                                        teacher = matchedTeachers.singleOrNull() ?: draft.teacher
-                                    )
-                                )
+                                updateSubject(candidate)
                                 showSubjectSuggestions = false
                             }
                         )
@@ -753,7 +753,10 @@ private fun ExamSlotEditorCard(
             ) {
                 TextField(
                     value = draft.teacher,
-                    onValueChange = { value -> onUpdateDraft(draft.copy(teacher = value)) },
+                    onValueChange = { value ->
+                        autoFilledTeacher = null
+                        onUpdateDraft(draft.copy(teacher = value))
+                    },
                     placeholder = { Text(stringResource(R.string.label_exam_teacher)) },
                     textStyle = MaterialTheme.typography.bodySmall,
                     singleLine = true,
@@ -785,6 +788,7 @@ private fun ExamSlotEditorCard(
                     teacherCandidatesForSubject.forEach { candidate ->
                         AssistChip(
                             onClick = {
+                                autoFilledTeacher = null
                                 onUpdateDraft(draft.copy(teacher = candidate))
                             },
                             label = { Text(candidate) }
@@ -811,11 +815,7 @@ private fun ExamSlotEditorCard(
     }
 }
 
-private fun examPeriodTitleRes(label: HolidaySpecialLabel): Int = when (label) {
-    HolidaySpecialLabel.MIDTERM -> R.string.holiday_label_midterm
-    HolidaySpecialLabel.FINAL -> R.string.holiday_label_final
-    else -> R.string.title_exam_timetable_periods
-}
+private fun examPeriodTitleRes(label: HolidaySpecialLabel): Int = label.textResources().title
 
 private val examDateFormatter = DateTimeFormatter.ofPattern("M/d")
 private val examTabDateFormatter = DateTimeFormatter.ofPattern("M/d(E)")

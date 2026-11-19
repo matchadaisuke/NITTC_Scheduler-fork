@@ -1,33 +1,25 @@
 package jp.linkserver.nittcsc.ui
 
+import jp.linkserver.nittcsc.TrickuildMetadata
+
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -39,31 +31,39 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import jp.linkserver.nittcsc.BuildConfig
+import jp.linkserver.pyrite.about.AboutUpdateCard
+import jp.linkserver.pyrite.about.AboutAction
+import jp.linkserver.pyrite.about.AboutActionGroup
+import jp.linkserver.pyrite.screen.PyriteScreenScaffold
+import jp.linkserver.pyrite.screen.PyriteBackButton
+import jp.linkserver.pyrite.theme.PyriteTheme
+import jp.linkserver.nittcsc.data.UiDesignMode
+import jp.linkserver.nittcsc.ui.theme.LocalUiDesignMode
+import androidx.compose.foundation.layout.PaddingValues
 import jp.linkserver.nittcsc.R
-import jp.linkserver.nittcsc.ui.components.AppLoadingIndicator
-import jp.linkserver.nittcsc.update.AppUpdateInfo
-import jp.linkserver.nittcsc.update.checkGitHubReleaseUpdate
-import jp.linkserver.nittcsc.update.detectReleaseChannel
+import jp.linkserver.goldy.*
 import jp.linkserver.nittcsc.update.isIntDevBuild
-import jp.linkserver.nittcsc.update.isShowLatestReleaseForTestingEnabled
-import jp.linkserver.nittcsc.update.markUpdateCheckFinished
-import jp.linkserver.nittcsc.update.resolveUpdateCurrentVersionForTesting
-import kotlinx.coroutines.Dispatchers
+import jp.linkserver.nittcsc.update.detectReleaseChannel
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AboutScreen(
     onBack: () -> Unit,
+    onCheckForUpdates: suspend () -> CheckOutcome,
     onOssLicenses: () -> Unit = {},
-    onUpdateAvailable: (AppUpdateInfo) -> Unit = {}
+    onUpdateAvailable: (UpdateCandidate) -> Unit = {},
+    availableUpdate: UpdateCandidate? = null,
+    onOpenUpdateCenter: () -> Unit = {},
+    hasSavedUpdate: Boolean = false
 ) {
     val context = LocalContext.current
     val resources = LocalResources.current
@@ -72,7 +72,6 @@ fun AboutScreen(
     val (simpleVersion, _) = remember { splitVersionAndChannel(versionName) }
     val normalizedChannelName = remember(versionName) { detectReleaseChannel(versionName) }
     val isIntDev = remember(versionName) { isIntDevBuild(versionName) }
-    val repositoryUrl = stringResource(R.string.about_support_site_url)
 
     val channelLabel = when {
         normalizedChannelName.equals("IntDev", ignoreCase = true) -> stringResource(R.string.about_dev_channel_value_intdev)
@@ -101,33 +100,91 @@ fun AboutScreen(
         checkingUpdates = true
         updateStatus = resources.getString(R.string.about_update_checking)
         scope.launch {
-            val result = withContext(Dispatchers.IO) {
-                checkGitHubReleaseUpdate(
-                    repositoryUrl = repositoryUrl,
-                    currentVersion = resolveUpdateCurrentVersionForTesting(context, versionName),
-                    showLatestForTesting = isShowLatestReleaseForTestingEnabled(context, versionName)
-                )
-            }
-            markUpdateCheckFinished(context)
+            val result = onCheckForUpdates()
             checkingUpdates = false
-            result
-                .onSuccess { updateInfo ->
-                    if (updateInfo != null) {
-                        updateStatus = resources.getString(R.string.about_update_available, updateInfo.tagName)
-                        onUpdateAvailable(updateInfo)
-                    } else {
-                        updateStatus = resources.getString(R.string.about_update_latest)
-                    }
-                }
-                .onFailure { error ->
-                    updateStatus = resources.getString(
-                        R.string.about_update_check_failed,
-                        error.localizedMessage ?: error.javaClass.simpleName
-                    )
-                }
+            updateStatus = when(result) {
+                is CheckOutcome.Available -> resources.getString(R.string.about_update_available,result.update.release.tag)
+                is CheckOutcome.Failure, is CheckOutcome.Throttled -> resources.getString(R.string.goldy_update_failed)
+                is CheckOutcome.Incomplete -> resources.getString(R.string.goldy_update_incomplete)
+                else -> resources.getString(R.string.about_update_latest)
+            }
         }
     }
 
+    val expressive = LocalUiDesignMode.current == UiDesignMode.MATERIAL_3_EXPRESSIVE
+    val aboutScrollState = rememberScrollState()
+    val pageContent: @Composable (PaddingValues) -> Unit = { padding ->
+        AdaptiveContentPane(
+            modifier = Modifier.padding(padding),
+            maxWidth = FormContentMaxWidth
+        ) {
+            Column(
+                modifier = Modifier.fillMaxSize().verticalScroll(aboutScrollState)
+                    .padding(horizontal = 20.dp, vertical = 18.dp),
+                verticalArrangement = Arrangement.spacedBy(28.dp)
+            ) {
+                // ── アプリ概要 ────────────────────────────────────────────
+                AboutOverviewMosaic(
+                    channelName = normalizedChannelName,
+                    channelLabel = channelLabel,
+                    versionName = versionName,
+                    simpleVersion = simpleVersion,
+                    versionCode = versionCode,
+                    buildNumber = TrickuildMetadata.BUILD_NUMBER,
+                    onVersionClick = { showVersionDetailsDialog = true },
+                    onChannelClick = { showChannelDialog = true },
+                    modifier = Modifier.align(Alignment.CenterHorizontally)
+                )
+
+                AboutCardsTheme {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text(stringResource(R.string.about_update_section_title),
+                            modifier = Modifier.semantics { heading() },
+                            style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold)
+                        val canOpenUpdate = availableUpdate != null || hasSavedUpdate
+                        AboutUpdateCard(
+                            description = stringResource(R.string.about_update_section_help),
+                            status = when {
+                                hasSavedUpdate -> stringResource(R.string.about_update_saved)
+                                availableUpdate != null -> stringResource(R.string.about_update_available, availableUpdate.release.tag)
+                                else -> updateStatus ?: stringResource(R.string.goldy_update_idle)
+                            },
+                            actionLabel = stringResource(if (canOpenUpdate) R.string.goldy_update_view else R.string.about_update_check_button),
+                            onCheck = {
+                                if (hasSavedUpdate) onOpenUpdateCenter()
+                                else availableUpdate?.let(onUpdateAvailable) ?: startUpdateCheck()
+                            }, checking = checkingUpdates && !canOpenUpdate,
+                            hasResult = updateStatus != null || canOpenUpdate
+                        )
+                    }
+                    AboutActionGroup(
+                        actions = listOf(
+                            AboutAction("github", stringResource(R.string.about_support_github_title),
+                                stringResource(R.string.about_support_help), stringResource(R.string.about_support_open_site)),
+                            AboutAction("x", stringResource(R.string.about_support_x_title),
+                                stringResource(R.string.about_support_x_help), stringResource(R.string.about_support_open_twitter)),
+                            AboutAction("licenses", stringResource(R.string.about_oss_title),
+                                stringResource(R.string.about_oss_help), stringResource(R.string.about_oss_open))
+                        ),
+                        onAction = { action ->
+                            when (action.key) {
+                                "github" -> openUrl(context, resources.getString(R.string.about_support_site_url))
+                                "x" -> openUrl(context, resources.getString(R.string.about_support_twitter_url))
+                                "licenses" -> onOssLicenses()
+                            }
+                        },
+                        title = stringResource(R.string.about_information_title)
+                    )
+                }
+            }
+        }
+    }
+    if (expressive) {
+        PyriteScreenScaffold(stringResource(R.string.about_screen_title), navigationIcon = {
+            PyriteBackButton(onBack, stringResource(R.string.cd_back))
+        }, content = pageContent)
+    } else {
     Scaffold(
         topBar = {
             TopAppBar(
@@ -141,199 +198,9 @@ fun AboutScreen(
                     }
                 }
             )
-        }
-    ) { padding ->
-        AdaptiveContentPane(
-            modifier = Modifier.padding(padding),
-            maxWidth = FormContentMaxWidth
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(16.dp)
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(24.dp)
-            ) {
-            // ── アプリ名・バージョン ──────────────────────────────────
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(
-                    text = stringResource(R.string.app_name),
-                    style = MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.Bold
-                )
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    text = stringResource(
-                        R.string.about_version_label,
-                        channelLabel,
-                        versionName,
-                        versionCode
-                    ),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-
-            // ── バージョン情報 ────────────────────────────────────────
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    text = stringResource(R.string.about_version_section_title),
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.Bold
-                )
-                Surface(
-                    shape = MaterialTheme.shapes.medium,
-                    color = MaterialTheme.colorScheme.surfaceContainer,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column {
-                        // バージョン（タップで詳細ダイアログ）
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { showVersionDetailsDialog = true }
-                                .padding(16.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = stringResource(R.string.about_simple_version_title),
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                            Text(
-                                text = stringResource(R.string.about_simple_version_value, simpleVersion),
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        HorizontalDivider()
-                        // 開発チャネル（タップでチャネル説明ダイアログ）
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { showChannelDialog = true }
-                                .padding(16.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = stringResource(R.string.about_dev_channel_title),
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                            Text(
-                                text = channelLabel,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                }
-            }
-
-            // ── サポート情報 ──────────────────────────────────────────
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    text = stringResource(R.string.about_support_title),
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.Bold
-                )
-                Text(
-                    text = stringResource(R.string.about_support_help),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    OutlinedButton(
-                        onClick = {
-                            openUrl(context, resources.getString(R.string.about_support_site_url))
-                        },
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text(stringResource(R.string.about_support_open_site))
-                    }
-                    OutlinedButton(
-                        onClick = {
-                            openUrl(context, resources.getString(R.string.about_support_twitter_url))
-                        },
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text(stringResource(R.string.about_support_open_twitter))
-                    }
-                }
-            }
-
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    text = stringResource(R.string.about_update_section_title),
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.Bold
-                )
-                Text(
-                    text = stringResource(R.string.about_update_section_help),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                OutlinedButton(
-                    onClick = { startUpdateCheck() },
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = !checkingUpdates
-                ) {
-                    if (checkingUpdates) {
-                        AppLoadingIndicator(
-                            modifier = Modifier
-                                .padding(end = 10.dp)
-                                .size(16.dp),
-                            compact = true
-                        )
-                    }
-                    Text(stringResource(R.string.about_update_check_button))
-                }
-                updateStatus?.let { status ->
-                    Text(
-                        text = status,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-
-            if (isIntDev) {
-                NotificationDebugSettingsContent()
-            }
-
-            // ── オープンソースライセンス ──────────────────────────────
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    text = stringResource(R.string.about_oss_title),
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.Bold
-                )
-                Text(
-                    text = stringResource(R.string.about_oss_help),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                OutlinedButton(
-                    onClick = onOssLicenses,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(stringResource(R.string.about_oss_open))
-                }
-            }
-            }
-        }
+        },
+        content = pageContent
+    )
     }
 
     // チャネル説明ダイアログ
@@ -363,7 +230,7 @@ fun AboutScreen(
                         R.string.about_version_details_message,
                         versionName,
                         versionCode,
-                        BuildConfig.BUILD_NUMBER
+                        TrickuildMetadata.BUILD_NUMBER
                     )
                 )
             },
@@ -373,6 +240,23 @@ fun AboutScreen(
                 }
             }
         )
+    }
+}
+
+/** Give Pyrite cards the host's light/dark state without changing the standard M3 palette or type. */
+@Composable
+private fun AboutCardsTheme(content: @Composable () -> Unit) {
+    if (LocalUiDesignMode.current == UiDesignMode.MATERIAL_3_EXPRESSIVE) {
+        content()
+        return
+    }
+    val colors = MaterialTheme.colorScheme
+    val typography = MaterialTheme.typography
+    val shapes = MaterialTheme.shapes
+    val motion = MaterialTheme.motionScheme
+    PyriteTheme(darkTheme = colors.surface.luminance() < 0.5f, dynamicColor = false) {
+        MaterialTheme(colorScheme = colors, typography = typography, shapes = shapes, motionScheme = motion,
+            content = content)
     }
 }
 
@@ -418,3 +302,7 @@ private fun openUrl(context: Context, url: String) {
         // URLを開けない場合は無視
     }
 }
+            if (isIntDev) {
+                NotificationDebugSettingsContent()
+            }
+

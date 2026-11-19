@@ -2,49 +2,115 @@ import java.io.File
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.text.SimpleDateFormat
-import java.time.Instant
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
 import java.util.Date
 import java.util.Locale
 import org.gradle.api.artifacts.component.ModuleComponentIdentifier
 import org.gradle.api.artifacts.result.ResolvedArtifactResult
 import org.gradle.maven.MavenModule
 import org.gradle.maven.MavenPomArtifact
+import java.util.zip.ZipInputStream
 import java.util.zip.ZipFile
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 import javax.xml.parsers.DocumentBuilderFactory
 
 plugins {
+    id("dev.trickuild")
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
     id("com.google.devtools.ksp") version "2.3.6"
 }
 
-val buildNumberFiles = (
-    fileTree("src") {
-        exclude("**/build/**")
-    }.files + listOf(
-        project.file("build.gradle.kts"),
-        rootProject.file("build.gradle.kts"),
-        rootProject.file("settings.gradle.kts"),
-        rootProject.file("gradle/libs.versions.toml")
-    ).filter { it.isFile }
-).sortedBy { it.relativeTo(rootProject.projectDir).invariantSeparatorsPath }
+// AIランタイムは必要時に取得する。同梱版のビルド: -PbundleAiRuntime=true
+val bundleAiRuntime = providers.gradleProperty("bundleAiRuntime").map {
+    it.toBooleanStrict()
+}.orElse(false).get()
+val llamaNativeArtifacts = configurations.create("llamaNativeArtifacts") {
+    isCanBeConsumed = false
+    isTransitive = false
+}
+val generatedLlamaJniDir = layout.buildDirectory.dir("generated/llama-jni")
+val prepareBundledAiRuntime = tasks.register("prepareBundledAiRuntime") {
+    inputs.files(llamaNativeArtifacts)
+    outputs.dir(generatedLlamaJniDir)
+    doLast {
+        val output = generatedLlamaJniDir.get().asFile
+        ZipFile(llamaNativeArtifacts.singleFile).use { source ->
+            source.entries().asSequence().filter {
+                !it.isDirectory && it.name.matches(Regex("jni/(arm64-v8a|x86_64)/lib[a-z0-9_]+\\.so"))
+            }.forEach { entry ->
+                val target = File(output, entry.name.removePrefix("jni/"))
+                target.parentFile.mkdirs()
+                source.getInputStream(entry).use { input -> target.outputStream().use { input.copyTo(it) } }
+            }
+        }
+    }
+}
 
-val appCodeName = "Sist" // トリッカルから取ります
+val aiRuntimeReleaseDir = layout.buildDirectory.dir("ai-runtime-release")
+tasks.register("prepareAiRuntimeRelease") {
+    inputs.files(llamaNativeArtifacts)
+    inputs.file("src/main/java/jp/linkserver/nittcsc/logic/AiRuntimeSpec.kt")
+    inputs.file("src/main/assets/oss_licenses/ai_runtime_licenses.txt")
+    outputs.dir(aiRuntimeReleaseDir)
+    doLast {
+        val catalog = file("src/main/java/jp/linkserver/nittcsc/logic/AiRuntimeSpec.kt").readText()
+        val expectedAarHash = Regex("AI_RUNTIME_AAR_SHA256 = \"([a-f0-9]+)\"").find(catalog)!!.groupValues[1]
+        fun sha256(bytes: ByteArray) = MessageDigest.getInstance("SHA-256").digest(bytes)
+            .joinToString("") { "%02x".format(it) }
+        val aar = llamaNativeArtifacts.singleFile
+        check(sha256(aar.readBytes()) == expectedAarHash) { "Unexpected llama.cpp AAR; update the pinned catalog first" }
+        val version = Regex("AI_RUNTIME_VERSION = \"([^\"]+)\"").find(catalog)!!.groupValues[1]
+        val artifacts = Regex("AiRuntimeArtifact\\(\"([^\"]+)\", \"([^\"]+)\", ([0-9]+), \"([a-f0-9]+)\"\\)")
+            .findAll(catalog).map { it.groupValues.drop(1) }.toList()
+        check(artifacts.size == 6) { "Missing AI runtime artifacts" }
+        val output = aiRuntimeReleaseDir.get().asFile.apply { mkdirs() }
+        val licenses = file("src/main/assets/oss_licenses/ai_runtime_licenses.txt").readBytes()
+        val checksums = mutableListOf<String>()
+        ZipFile(aar).use { source ->
+            artifacts.forEach { (name, abi, size, hash) ->
+                val entryName = "lib$name.so"
+                val bytes = source.getInputStream(source.getEntry("jni/$abi/$entryName")).use { it.readBytes() }
+                check(bytes.size.toLong() == size.toLong() && sha256(bytes) == hash) { "Invalid runtime binary: $name" }
+                val target = File(output, "$name.zip")
+                ZipOutputStream(target.outputStream()).use { zip ->
+                    listOf(entryName to bytes, "LICENSES.txt" to licenses).forEach { (path, contents) ->
+                        zip.putNextEntry(ZipEntry(path).apply { time = 0 })
+                        zip.write(contents)
+                        zip.closeEntry()
+                    }
+                }
+                checksums += "${sha256(target.readBytes())}  ${target.name}"
+            }
+        }
+        File(output, "SHA256SUMS.txt").writeText(checksums.joinToString("\n", postfix = "\n"))
+        File(output, "release-notes.md").writeText(
+            "NITTC Scheduler用の追加AIエンジンです。\n\n" +
+                "io.github.ljcamargo:llamacpp-kotlin:0.4.0 のCPU別ネイティブライブラリを配布します。" +
+                "アプリが対応するファイルを取得し、内蔵SHA-256で検証します。各ZIPにLICENSES.txtを含みます。\n"
+        )
+        logger.lifecycle("AI runtime release {}: {}", version, output)
+    }
+}
+
+
 val appVersionName = providers.gradleProperty("APP_VERSION_NAME")
     .orElse(providers.environmentVariable("APP_VERSION_NAME"))
-    .orElse("1.1.0-IntDev")
+    .orElse("1.2.0-IntDev")
     .get()
     .trim()
     .also { require(it.isNotBlank()) { "APP_VERSION_NAME must not be blank" } }
+
+// フォーク拡張: バージョンコードを環境変数/Gradleプロパティで上書き可能にする（既定は本家の値）。
 val appVersionCode = providers.gradleProperty("APP_VERSION_CODE")
     .orElse(providers.environmentVariable("APP_VERSION_CODE"))
-    .orElse("18")
+    .orElse("21")
     .get()
     .toIntOrNull()
     ?.also { require(it > 0) { "APP_VERSION_CODE must be greater than zero" } }
     ?: error("APP_VERSION_CODE must be a positive integer")
+
+// フォーク拡張: リリース署名情報は環境変数から受け取る（未設定なら署名設定を作らない）。
 val releaseStoreFilePath = providers.environmentVariable("NITTC_RELEASE_STORE_FILE").orNull
 val releaseStorePassword = providers.environmentVariable("NITTC_RELEASE_STORE_PASSWORD").orNull
 val releaseKeyAlias = providers.environmentVariable("NITTC_RELEASE_KEY_ALIAS").orNull
@@ -55,20 +121,7 @@ val releaseSigningConfigured = listOf(
     releaseKeyAlias,
     releaseKeyPassword
 ).all { !it.isNullOrBlank() }
-val buildContentHash = MessageDigest.getInstance("SHA-256").run {
-    buildNumberFiles.forEach { file ->
-        update(file.relativeTo(rootProject.projectDir).invariantSeparatorsPath.toByteArray())
-        update(0)
-        update(file.readBytes())
-        update(0)
-    }
-    digest().joinToString("") { "%02x".format(it) }
-}
-val buildTimestamp = DateTimeFormatter.ofPattern("yyMMdd-HHmm")
-    .withZone(ZoneId.systemDefault())
-    .format(Instant.ofEpochMilli(buildNumberFiles.maxOf { it.lastModified() }))
-val generatedBuildNumber =
-    "$appCodeName-v${appVersionName.substringBefore('-')}-$buildTimestamp-${buildContentHash.take(3)}"
+
 
 // ── OSS ライセンス生成タスク ──────────────────────────────────────────────
 
@@ -156,6 +209,21 @@ fun readNoticeOrLicenseText(artifactFile: File): String? {
     )
     return runCatching {
         ZipFile(artifactFile).use { zip ->
+            // AAR Java resources are nested in classes.jar. Read attribution from the resolved
+            // public artifact, never from a neighboring source checkout or generated JSON.
+            zip.getEntry("classes.jar")?.let { classes ->
+                val notices = linkedMapOf<String, String>()
+                ZipInputStream(zip.getInputStream(classes)).use { nested ->
+                    var entry = nested.nextEntry
+                    while (entry != null) {
+                        if (entry.name == "META-INF/pyrite/LICENSE" || entry.name == "META-INF/pyrite/NOTICE.md") {
+                            notices[entry.name] = nested.readBytes().toString(StandardCharsets.UTF_8)
+                        }
+                        entry = nested.nextEntry
+                    }
+                }
+                if (notices.isNotEmpty()) return@use notices.toSortedMap().values.joinToString("\n\n")
+            }
             candidateNames.firstNotNullOfOrNull { name ->
                 val entry = zip.getEntry(name) ?: return@firstNotNullOfOrNull null
                 zip.getInputStream(entry).bufferedReader(StandardCharsets.UTF_8).use { reader ->
@@ -208,6 +276,10 @@ val generatedOssAssetsDir = layout.buildDirectory.dir("generated/oss-assets")
 val generatedOssFile = generatedOssAssetsDir.map { it.file("oss_licenses/oss_licenses_auto.json") }
 
 val generateOssLicensesAutoJson = tasks.register("generateOssLicensesAutoJson") {
+    inputs.files(providers.provider { configurations.getByName("debugRuntimeClasspath") })
+        .withPropertyName("runtimeArtifacts")
+    inputs.files(llamaNativeArtifacts).withPropertyName("nativeArtifacts")
+    inputs.file("src/main/assets/oss_licenses/ai_runtime_licenses.txt")
     outputs.file(generatedOssFile)
     doLast {
         val runtimeConfigurationName = listOf(
@@ -224,7 +296,10 @@ val generateOssLicensesAutoJson = tasks.register("generateOssLicensesAutoJson") 
             .artifacts
             .filterIsInstance<ResolvedArtifactResult>()
 
-        val moduleArtifacts = runtimeArtifacts
+        val nativeArtifacts = llamaNativeArtifacts.incoming.artifacts.artifacts
+            .filterIsInstance<ResolvedArtifactResult>()
+
+        val moduleArtifacts = (runtimeArtifacts + nativeArtifacts)
             .mapNotNull { artifact ->
                 val id = artifact.id.componentIdentifier as? ModuleComponentIdentifier
                     ?: return@mapNotNull null
@@ -261,7 +336,9 @@ val generateOssLicensesAutoJson = tasks.register("generateOssLicensesAutoJson") 
             }
             val licenseUrl = licenses.firstOrNull { !it.url.isNullOrBlank() }?.url
             val projectUrl = pom?.projectUrl
-            val body = readNoticeOrLicenseText(artifactFile)
+            val body = if (id.group == "io.github.ljcamargo" && id.module == "llamacpp-kotlin") {
+                file("src/main/assets/oss_licenses/ai_runtime_licenses.txt").readText()
+            } else readNoticeOrLicenseText(artifactFile)
             OssCatalogEntry(
                 title = pom?.name?.takeIf { it.isNotBlank() }
                     ?: resolveDisplayTitle(id.group, id.module),
@@ -302,6 +379,17 @@ val generateOssLicensesAutoJson = tasks.register("generateOssLicensesAutoJson") 
 
 tasks.named("preBuild").configure {
     dependsOn(generateOssLicensesAutoJson)
+    if (bundleAiRuntime) dependsOn(prepareBundledAiRuntime)
+}
+
+trickuild {
+    codename.set("Meluna")
+    buildNumber {
+        enabled.set(true)
+        hashLength.set(5)
+        timestampSource.set("build")
+        timeZone.set("Asia/Tokyo")
+    }
 }
 
 android {
@@ -321,7 +409,7 @@ android {
         targetSdk = 36
         versionCode = appVersionCode
         versionName = appVersionName
-        buildConfigField("String", "BUILD_NUMBER", "\"$generatedBuildNumber\"")
+        buildConfigField("boolean", "BUNDLED_AI_RUNTIME", bundleAiRuntime.toString())
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
@@ -368,6 +456,7 @@ android {
     }
     sourceSets.getByName("main") {
         assets.srcDirs("build/generated/oss-assets")
+        if (bundleAiRuntime) jniLibs.srcDir(generatedLlamaJniDir.get().asFile)
     }
 }
 
@@ -384,18 +473,19 @@ dependencies {
     }
     implementation("androidx.exifinterface:exifinterface:1.3.7")
     implementation("org.jetbrains:annotations:24.1.0")
-
+    implementation("com.github.Link2011-Act2.Goldy:elief:811908945c0763066e04b54ee1424a208ceb87a5")
+    implementation("com.github.Link2011-Act2:Pyrite:508b1cf5131679fee7581acbc7ea55a365b6ff2c")
     implementation("androidx.core:core-ktx:1.18.0")
-    implementation("androidx.appcompat:appcompat:1.7.0")
+    implementation("androidx.appcompat:appcompat:1.7.1")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.2")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.2")
     implementation("androidx.activity:activity-compose:1.9.0")
 
     implementation(platform("androidx.compose:compose-bom:2026.06.00"))
-    implementation("androidx.compose.ui:ui")
-    implementation("androidx.compose.ui:ui-graphics")
-    implementation("androidx.compose.ui:ui-tooling-preview")
-    implementation("androidx.compose.material3:material3:1.5.0-alpha25")
+    implementation("androidx.compose.ui:ui:1.12.0")
+    implementation("androidx.compose.ui:ui-graphics:1.12.0")
+    implementation("androidx.compose.ui:ui-tooling-preview:1.12.0")
+    implementation("androidx.compose.material3:material3:1.5.0-beta01")
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.navigation:navigation-compose:2.7.7")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.2")
@@ -415,12 +505,23 @@ dependencies {
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20260814")
+
+    // QR共有はモデルのダウンロードなしでオフライン動作する。
+    implementation("com.google.zxing:core:3.5.4")
+    implementation("io.github.zxing-cpp:android:3.1.1") {
+        // ラッパーが使うImageProxy APIは既存のCameraX 1.4.2で利用できる。
+        exclude(group = "androidx.camera", module = "camera-core")
+    }
+    implementation("androidx.camera:camera-camera2:1.4.2")
+    implementation("androidx.camera:camera-lifecycle:1.4.2")
+    implementation("androidx.camera:camera-view:1.4.2")
+    implementation("com.github.bumptech.glide:gifdecoder:4.16.0")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
     androidTestImplementation(platform("androidx.compose:compose-bom:2026.06.00"))
-    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
-    debugImplementation("androidx.compose.ui:ui-tooling")
-    debugImplementation("androidx.compose.ui:ui-test-manifest")
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4:1.12.0")
+    debugImplementation("androidx.compose.ui:ui-tooling:1.12.0")
+    debugImplementation("androidx.compose.ui:ui-test-manifest:1.12.0")
 
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     
@@ -429,8 +530,11 @@ dependencies {
     implementation("io.noties.markwon:core:4.6.2")
     implementation("io.noties.markwon:ext-tables:4.6.2")
     
-    // llama.cpp Android wrapper (offline multimodal support)
-    implementation("io.github.ljcamargo:llamacpp-kotlin:0.4.0")
+    // JNIラッパーはソースで保持する。AARは同梱版・配布ZIP生成・OSS表示だけに使用する。
+    add(llamaNativeArtifacts.name, "io.github.ljcamargo:llamacpp-kotlin:0.4.0@aar")
+    // 元ラッパーの推移依存を維持する。
+    implementation("org.jetbrains.kotlin:kotlin-stdlib:2.3.20")
+    implementation("com.google.android.material:material:1.13.0")
     
     // ML Kit for local on-device OCR fallback for text-only LLMs
     implementation("com.google.android.gms:play-services-mlkit-text-recognition-japanese:16.0.1")

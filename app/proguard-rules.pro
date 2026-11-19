@@ -1,3 +1,8 @@
+# WorkManagerはInputMergerをクラス名と引数なしコンストラクターで生成する。
+# R8の最適化でコンストラクターが消えると、授業通知を含むOneTimeWorkが実行できない。
+-keep class * extends androidx.work.InputMerger {
+    public <init>();
+}
 
 # MEGA SDK Java/SWIG bindings are accessed through reflection.
 -keep class nz.mega.sdk.** { *; }
@@ -12,3 +17,6 @@
 -keep class * extends androidx.work.ListenableWorker {
     public <init>(android.content.Context, androidx.work.WorkerParameters);
 }
+
+# ダウンロードする固定済みネイティブライブラリのJNI名とコールバック名を維持する。
+-keep class org.nehuatl.llamacpp.** { *; }

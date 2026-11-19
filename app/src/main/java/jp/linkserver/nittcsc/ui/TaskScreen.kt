@@ -89,6 +89,8 @@ import jp.linkserver.nittcsc.ui.components.AppFabMenuAction
 import jp.linkserver.nittcsc.ui.components.AppFloatingActionButton
 import jp.linkserver.nittcsc.ui.theme.ExpressiveTaskHeroShape
 import jp.linkserver.nittcsc.ui.theme.LocalUiDesignMode
+import jp.linkserver.nittcsc.ui.theme.appCardContainerColor
+import jp.linkserver.nittcsc.ui.theme.appInsetContainerColor
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
@@ -121,8 +123,7 @@ fun TaskScreen(
     val listState = rememberLazyListState()
     val useExpressiveDesign = LocalUiDesignMode.current == UiDesignMode.MATERIAL_3_EXPRESSIVE
     val initialToday = remember { LocalDate.now() }
-    val currentDateTime = rememberCurrentDateTime(useExpressiveDesign)
-    val today = currentDateTime?.toLocalDate() ?: initialToday
+    val today = if (useExpressiveDesign) rememberCurrentDate() else initialToday
 
     val overdueTasks = remember(tasks, today) { tasks.filter { it.dueDate.isBefore(today) } }
     val todayTasks = remember(tasks, today) { tasks.filter { it.dueDate == today } }
@@ -134,17 +135,6 @@ fun TaskScreen(
                 .thenBy { it.dueHour }
                 .thenBy { it.dueMinute }
         )
-    }
-    val expressiveDeadlineTask = remember(tasks, currentDateTime) {
-        val now = currentDateTime ?: return@remember null
-        val overdue = tasks
-            .asSequence()
-            .filter { it.dueDateTime().isBefore(now) }
-            .maxByOrNull { it.dueDateTime() }
-        overdue ?: tasks
-            .asSequence()
-            .filter { !it.dueDateTime().isBefore(now) }
-            .minByOrNull { it.dueDateTime() }
     }
 
     LaunchedEffect(focusTaskId, tasks, completedTasksSorted, expandCompleted) {
@@ -211,18 +201,12 @@ fun TaskScreen(
             if (tasks.isNotEmpty()) {
                 item {
                     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                        if (
-                            useExpressiveDesign &&
-                            !isPlan &&
-                            expressiveDeadlineTask != null &&
-                            currentDateTime != null
-                        ) {
-                            ExpressiveTaskDeadlineHero(
-                                task = expressiveDeadlineTask,
-                                now = currentDateTime,
+                        if (useExpressiveDesign && !isPlan) {
+                            CurrentTaskDeadlineHero(
+                                tasks = tasks,
                                 showWeekdayOnDates = showWeekdayOnDates,
-                                onOpen = { onOpenTaskEditor(expressiveDeadlineTask) },
-                                onComplete = { onMarkComplete(expressiveDeadlineTask) }
+                                onOpen = { onOpenTaskEditor(it) },
+                                onComplete = onMarkComplete
                             )
                         }
                         Text(
@@ -423,6 +407,32 @@ fun TaskScreen(
 private fun TaskEntity.dueDateTime(): LocalDateTime =
     dueDate.atTime(dueHour.coerceIn(0, 23), dueMinute.coerceIn(0, 59))
 
+/** 分単位の更新と期限検索は、表示中の先頭カード内だけで行う。 */
+@Composable
+private fun CurrentTaskDeadlineHero(
+    tasks: List<TaskEntity>,
+    showWeekdayOnDates: Boolean,
+    onOpen: (TaskEntity) -> Unit,
+    onComplete: (TaskEntity) -> Unit
+) {
+    val currentDateTime = rememberCurrentDateTime(enabled = true)
+    val expressiveDeadlineTask = remember(tasks, currentDateTime) {
+        val now = currentDateTime ?: return@remember null
+        val overdue = tasks
+            .asSequence()
+            .filter { it.dueDateTime().isBefore(now) }
+            .maxByOrNull { it.dueDateTime() }
+        overdue ?: tasks
+            .asSequence()
+            .filter { !it.dueDateTime().isBefore(now) }
+            .minByOrNull { it.dueDateTime() }
+    }
+    val task = expressiveDeadlineTask ?: return
+    val now = currentDateTime ?: return
+    ExpressiveTaskDeadlineHero(task, now, showWeekdayOnDates,
+        onOpen = { onOpen(task) }, onComplete = { onComplete(task) })
+}
+
 @Composable
 private fun ExpressiveTaskDeadlineHero(
     task: TaskEntity,
@@ -620,8 +630,13 @@ private fun TaskCard(
         }
     }
 
+    val backgroundColor = appCardContainerColor(
+        standardColor = if (isCompleted) MaterialTheme.colorScheme.surfaceContainer else MaterialTheme.colorScheme.surfaceContainerLow,
+        subdued = isCompleted
+    )
+    val insetColor = appInsetContainerColor(parentColor = backgroundColor)
     val dueStatusContainer = when {
-        task.completedDate != null -> MaterialTheme.colorScheme.surfaceContainerHighest
+        task.completedDate != null -> insetColor
         isOverdue -> LegacyTaskBadgeContainer
         task.dueDate == today -> LegacyTaskBadgeContainer
         else -> {
@@ -651,19 +666,13 @@ private fun TaskCard(
     val priorityContainer = when (task.priority) {
         1 -> LegacyTaskBadgeContainer
         -1 -> MaterialTheme.colorScheme.tertiaryContainer
-        else -> MaterialTheme.colorScheme.surfaceContainerHighest
+        else -> insetColor
     }
 
     val priorityContent = when (task.priority) {
         1 -> LegacyTaskBadgeOnContainer
         -1 -> MaterialTheme.colorScheme.onTertiaryContainer
         else -> MaterialTheme.colorScheme.onSurfaceVariant
-    }
-
-    val backgroundColor = if (isCompleted) {
-        MaterialTheme.colorScheme.surfaceContainer
-    } else {
-        MaterialTheme.colorScheme.surfaceContainerLow
     }
 
     val density = LocalDensity.current
@@ -872,7 +881,7 @@ private fun TaskCard(
                         if (task.subject.isNotBlank()) {
                             Surface(
                                 shape = RoundedCornerShape(999.dp),
-                                color = MaterialTheme.colorScheme.surfaceContainerHighest
+                                color = insetColor
                             ) {
                                 Text(
                                     text = task.subject,
@@ -887,7 +896,7 @@ private fun TaskCard(
                         if (task.teacher?.isNotBlank() == true) {
                             Surface(
                                 shape = RoundedCornerShape(999.dp),
-                                color = MaterialTheme.colorScheme.surfaceContainerHighest
+                                color = insetColor
                             ) {
                                 Text(
                                     text = task.teacher,

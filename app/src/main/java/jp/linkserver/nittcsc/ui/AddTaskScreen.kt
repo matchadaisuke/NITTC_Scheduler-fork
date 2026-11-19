@@ -1,5 +1,7 @@
 package jp.linkserver.nittcsc.ui
 
+import jp.linkserver.nittcsc.ui.theme.appInsetContainerColor
+import jp.linkserver.nittcsc.ui.theme.appCardContainerColor
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -61,6 +63,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import jp.linkserver.nittcsc.R
 import jp.linkserver.nittcsc.data.TaskEntity
+import jp.linkserver.nittcsc.logic.updateTeacherAutoFill
 import jp.linkserver.nittcsc.ui.components.AppSwitch
 import kotlinx.coroutines.launch
 import java.time.LocalDate
@@ -93,6 +96,10 @@ fun AddTaskScreen(
     var description by rememberSaveable(editorStateKey) { mutableStateOf(task?.description ?: "") }
     var subject by rememberSaveable(editorStateKey) { mutableStateOf(task?.subject ?: "") }
     var teacher by rememberSaveable(editorStateKey) { mutableStateOf(task?.teacher ?: "") }
+    var autoFilledTeacher by rememberSaveable(editorStateKey) {
+        mutableStateOf(task?.teacher?.takeIf { task.id == 0L && it.isNotBlank() })
+    }
+    var autoFilledSubject by rememberSaveable(editorStateKey) { mutableStateOf(task?.subject?.trim().orEmpty()) }
     // 新規タスクで教科名が事前設定されている場合は自動検索を即座にトリガーする
     var subjectEditedByUser by rememberSaveable(editorStateKey) {
         mutableStateOf(autoResolveInitialSubject && (task?.id ?: 0L) == 0L && task?.subject?.isNotBlank() == true)
@@ -102,6 +109,7 @@ fun AddTaskScreen(
     }
     var dueHour by rememberSaveable(editorStateKey) { mutableStateOf(task?.dueHour ?: defaultDueHour) }
     var dueMinute by rememberSaveable(editorStateKey) { mutableStateOf(task?.dueMinute ?: defaultDueMinute) }
+    var dueEditedManually by rememberSaveable(editorStateKey) { mutableStateOf(false) }
     var priority by rememberSaveable(editorStateKey) { mutableStateOf(task?.priority ?: 0) }
     val defaultReminderDateTime = remember(task?.id) {
         val now = LocalDateTime.now()
@@ -198,8 +206,9 @@ fun AddTaskScreen(
             .toList()
     }
 
-    LaunchedEffect(subject.trim(), teacher.trim()) {
+    LaunchedEffect(subject.trim(), teacher.trim(), dueEditedManually) {
         if (!showLessonDateNavigation) return@LaunchedEffect
+        if (dueEditedManually) return@LaunchedEffect
         val subjectValue = subject.trim()
         if (subjectValue.isBlank()) return@LaunchedEffect
         if (!subjectEditedByUser) return@LaunchedEffect
@@ -211,7 +220,7 @@ fun AddTaskScreen(
                 LocalDate.now(),
                 LocalTime.now()
             )
-            if (nextDateTime != null) {
+            if (nextDateTime != null && !dueEditedManually) {
                 dueDate = nextDateTime.first
                 dueHour = nextDateTime.second.hour
                 dueMinute = nextDateTime.second.minute
@@ -221,13 +230,16 @@ fun AddTaskScreen(
         }
     }
 
-    LaunchedEffect(subject.trim(), subjectTeacherCandidates) {
-        val subjectValue = subject.trim()
-        if (subjectValue.isBlank()) return@LaunchedEffect
-        if (!subjectEditedByUser) return@LaunchedEffect
-        if (teacherCandidatesForSubject.size == 1) {
-            teacher = teacherCandidatesForSubject.first()
-        }
+    LaunchedEffect(subject.trim(), subjectEditedByUser, subjectTeacherCandidates) {
+        if (!subjectEditedByUser && autoFilledTeacher == null) return@LaunchedEffect
+        // 時間割未登録の教科を授業・試験から引き継いだ場合、その教員を維持する。
+        if (subject.trim().equals(autoFilledSubject, ignoreCase = true) &&
+            subjectTeacherCandidates.keys.none { it.equals(subject.trim(), ignoreCase = true) }
+        ) return@LaunchedEffect
+        val result = updateTeacherAutoFill(teacher, autoFilledTeacher, teacherCandidatesForSubject)
+        teacher = result.teacher
+        autoFilledTeacher = result.autoFilledTeacher
+        autoFilledSubject = subject.trim()
     }
 
     val canSave = title.isNotBlank() && (isPlan || subject.isNotBlank())
@@ -358,7 +370,7 @@ fun AddTaskScreen(
             SectionLabel(stringResource(R.string.section_task_basic))
             Card(
                 colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+                    containerColor = appCardContainerColor(standardColor = MaterialTheme.colorScheme.surfaceContainerLow)
                 ),
                 shape = RoundedCornerShape(20.dp),
                 modifier = Modifier.fillMaxWidth()
@@ -403,7 +415,7 @@ fun AddTaskScreen(
             SectionLabel(stringResource(R.string.section_task_subject))
             Card(
                 colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+                    containerColor = appCardContainerColor(standardColor = MaterialTheme.colorScheme.surfaceContainerLow)
                 ),
                 shape = RoundedCornerShape(20.dp),
                 modifier = Modifier.fillMaxWidth()
@@ -471,7 +483,7 @@ fun AddTaskScreen(
                     )
                     TextField(
                         value = teacher,
-                        onValueChange = { teacher = it },
+                        onValueChange = { teacher = it; autoFilledTeacher = null },
                         placeholder = { Text(stringResource(R.string.placeholder_teacher)) },
                         textStyle = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.fillMaxWidth(),
@@ -491,7 +503,7 @@ fun AddTaskScreen(
                         ) {
                             teacherCandidatesForSubject.forEach { candidate ->
                                 AssistChip(
-                                    onClick = { teacher = candidate },
+                                    onClick = { teacher = candidate; autoFilledTeacher = null },
                                     label = { Text(candidate) }
                                 )
                             }
@@ -507,7 +519,7 @@ fun AddTaskScreen(
             )
             Card(
                 colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+                    containerColor = appCardContainerColor(standardColor = MaterialTheme.colorScheme.surfaceContainerLow)
                 ),
                 shape = RoundedCornerShape(20.dp),
                 modifier = Modifier.fillMaxWidth()
@@ -522,7 +534,9 @@ fun AddTaskScreen(
                             confirmButton = {
                                 TextButton(onClick = {
                                     datePickerState.selectedDateMillis?.let { millis ->
-                                        dueDate = LocalDate.ofEpochDay(millis / 86400000L)
+                                        val selectedDate = LocalDate.ofEpochDay(millis / 86400000L)
+                                        if (selectedDate != dueDate) dueEditedManually = true
+                                        dueDate = selectedDate
                                     }
                                     showDatePickerDialog = false
                                 }) { Text(stringResource(R.string.btn_save)) }
@@ -551,6 +565,9 @@ fun AddTaskScreen(
                             onDismissRequest = { showTimePickerDialog = false },
                             confirmButton = {
                                 TextButton(onClick = {
+                                    if (timePickerState.hour != dueHour || timePickerState.minute != dueMinute) {
+                                        dueEditedManually = true
+                                    }
                                     dueHour = timePickerState.hour
                                     dueMinute = timePickerState.minute
                                     showTimePickerDialog = false
@@ -620,6 +637,7 @@ fun AddTaskScreen(
                             OutlinedButton(
                                 onClick = {
                                     if (subject.isNotBlank()) {
+                                        dueEditedManually = true
                                         isAutoResolvingDate = true
                                         coroutineScope.launch {
                                             try {
@@ -648,6 +666,7 @@ fun AddTaskScreen(
                             OutlinedButton(
                                 onClick = {
                                     if (subject.isNotBlank()) {
+                                        dueEditedManually = true
                                         isAutoResolvingDate = true
                                         coroutineScope.launch {
                                             try {
@@ -681,7 +700,7 @@ fun AddTaskScreen(
             SectionLabel(stringResource(R.string.section_task_reminder))
             Card(
                 colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+                    containerColor = appCardContainerColor(standardColor = MaterialTheme.colorScheme.surfaceContainerLow)
                 ),
                 shape = RoundedCornerShape(20.dp),
                 modifier = Modifier.fillMaxWidth()
@@ -758,7 +777,7 @@ fun AddTaskScreen(
             SectionLabel(stringResource(R.string.label_task_priority))
             Card(
                 colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+                    containerColor = appCardContainerColor(standardColor = MaterialTheme.colorScheme.surfaceContainerLow)
                 ),
                 shape = RoundedCornerShape(20.dp),
                 modifier = Modifier.fillMaxWidth()
@@ -781,7 +800,7 @@ fun AddTaskScreen(
                                 .clickable { priority = value },
                             shape = RoundedCornerShape(12.dp),
                             color = if (selected) MaterialTheme.colorScheme.primaryContainer
-                                    else MaterialTheme.colorScheme.surfaceContainerHigh
+                                    else appInsetContainerColor(standardColor = MaterialTheme.colorScheme.surfaceContainerHigh)
                         ) {
                             Column(
                                 modifier = Modifier.padding(vertical = 10.dp),

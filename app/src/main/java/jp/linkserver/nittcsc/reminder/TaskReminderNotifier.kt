@@ -80,7 +80,7 @@ internal object TaskReminderNotifier {
 
         val notificationId = notificationId(task.id)
         val notification = NotificationCompat.Builder(appContext, CHANNEL_ID)
-            .setSmallIcon(R.mipmap.ic_launcher)
+            .setSmallIcon(R.drawable.ic_notification_assignment)
             .setContentTitle(appContext.getString(R.string.task_reminder_notification_title))
             .setContentText(appContext.getString(R.string.task_reminder_notification_body, task.title))
             .setStyle(NotificationCompat.BigTextStyle().bigText(buildReminderBody(appContext, task)))
