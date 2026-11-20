@@ -158,6 +158,10 @@ fun AboutScreen(
                             hasResult = updateStatus != null || canOpenUpdate
                         )
                     }
+                    // フォーク拡張: IntDevビルドのみ、通知の動作確認ツールを表示する。
+                    if (isIntDev) {
+                        NotificationDebugSettingsContent()
+                    }
                     AboutActionGroup(
                         actions = listOf(
                             AboutAction("github", stringResource(R.string.about_support_github_title),
@@ -302,7 +306,3 @@ private fun openUrl(context: Context, url: String) {
         // URLを開けない場合は無視
     }
 }
-            if (isIntDev) {
-                NotificationDebugSettingsContent()
-            }
-

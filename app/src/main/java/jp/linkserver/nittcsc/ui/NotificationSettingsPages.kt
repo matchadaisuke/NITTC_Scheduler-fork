@@ -72,9 +72,11 @@ internal fun NotificationSettingsList(
 private fun triggerSummary(triggers: List<LessonNotificationTrigger>?): String {
     val enabled = triggers.orEmpty().filter { it.enabled }
     if (enabled.isEmpty()) return stringResource(R.string.notification_summary_off)
+    // joinToString のラムダは Composable の文脈ではないため、文字列は先に取得しておく。
+    val resources = LocalContext.current.resources
     val timings = enabled.joinToString("・") {
-        if (it.minutesBefore == 0) stringResource(R.string.notification_summary_at_time)
-        else stringResource(R.string.notification_summary_minutes_before, it.minutesBefore)
+        if (it.minutesBefore == 0) resources.getString(R.string.notification_summary_at_time)
+        else resources.getString(R.string.notification_summary_minutes_before, it.minutesBefore)
     }
     return stringResource(R.string.notification_summary_timings, timings)
 }
